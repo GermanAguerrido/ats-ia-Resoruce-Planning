@@ -9,16 +9,20 @@ const menuItems = [
     href: "/",
   },
   {
+    label: "Clients",
+    href: "/clients",
+  },
+  {
+    label: "Projects",
+    href: "/projects",
+  },
+  {
     label: "Candidates",
     href: "/candidates",
   },
   {
-    label: "Open Positions",
+    label: "Resource Planning",
     href: "/jobs",
-  },
-  {
-    label: "Kanban",
-    href: "/kanban",
   },
   {
     label: "Interviews",

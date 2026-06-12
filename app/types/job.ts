@@ -13,6 +13,8 @@ export type JobDeadlineType = "fixed_date" | "asap";
 
 export interface Job {
   id: string;
+  clientId: string;           // ← NUEVO
+  projectId: string;          // ← NUEVO
   client: string;
   project: string;
   position: string;
