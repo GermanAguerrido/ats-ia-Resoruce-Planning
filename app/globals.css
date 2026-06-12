@@ -1,0 +1,223 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f9fafb;
+  --foreground: #111827;
+
+  --app-bg: #f9fafb;
+  --app-surface: #ffffff;
+  --app-surface-muted: #f3f4f6;
+  --app-border: #e5e7eb;
+
+  --app-text-primary: #111827;
+  --app-text-secondary: #4b5563;
+  --app-text-muted: #9ca3af;
+
+  --app-input-bg: #ffffff;
+  --app-input-border: #e5e7eb;
+  --app-input-text: #111827;
+  --app-input-placeholder: #9ca3af;
+
+  --app-button-primary-bg: #111827;
+  --app-button-primary-text: #ffffff;
+  --app-button-primary-hover: #1f2937;
+
+  --sidebar-bg: #111827;
+  --sidebar-border: #1f2937;
+  --sidebar-title: #ffffff;
+  --sidebar-text: #ffffff;
+  --sidebar-item-bg: #111827;
+  --sidebar-item-hover: #1f2937;
+
+  --scrollbar-track: #f3f4f6;
+  --scrollbar-thumb: #c4b5fd;
+  --scrollbar-thumb-hover: #8b5cf6;
+}
+
+html[data-theme="dark"] {
+  --background: #020617;
+  --foreground: #e5e7eb;
+
+  --app-bg: #020617;
+  --app-surface: #0f172a;
+  --app-surface-muted: #111827;
+  --app-border: #1e293b;
+
+  --app-text-primary: #f8fafc;
+  --app-text-secondary: #cbd5e1;
+  --app-text-muted: #64748b;
+
+  --app-input-bg: #0f172a;
+  --app-input-border: #334155;
+  --app-input-text: #f8fafc;
+  --app-input-placeholder: #64748b;
+
+  --app-button-primary-bg: #f8fafc;
+  --app-button-primary-text: #020617;
+  --app-button-primary-hover: #e5e7eb;
+
+  --sidebar-bg: #020617;
+  --sidebar-border: #1e293b;
+  --sidebar-title: #f8fafc;
+  --sidebar-text: #e5e7eb;
+  --sidebar-item-bg: #0f172a;
+  --sidebar-item-hover: #1e293b;
+
+  --scrollbar-track: #020617;
+  --scrollbar-thumb: #475569;
+  --scrollbar-thumb-hover: #8b5cf6;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 2px solid var(--scrollbar-track);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
+}
+
+html {
+  background: var(--background);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* App semantic classes */
+
+.app-bg {
+  background-color: var(--app-bg);
+}
+
+.app-surface {
+  background-color: var(--app-surface);
+}
+
+.app-surface-muted {
+  background-color: var(--app-surface-muted);
+}
+
+.app-border {
+  border-color: var(--app-border);
+}
+
+.app-text-primary {
+  color: var(--app-text-primary);
+}
+
+.app-text-secondary {
+  color: var(--app-text-secondary);
+}
+
+.app-text-muted {
+  color: var(--app-text-muted);
+}
+
+.app-input {
+  background-color: var(--app-input-bg);
+  border-color: var(--app-input-border);
+  color: var(--app-input-text);
+}
+
+.app-input::placeholder {
+  color: var(--app-input-placeholder);
+}
+
+.app-button-primary {
+  background-color: var(--app-button-primary-bg);
+  color: var(--app-button-primary-text);
+}
+
+.app-button-primary:hover {
+  background-color: var(--app-button-primary-hover);
+}
+
+.app-card {
+  background-color: var(--app-surface);
+  border-color: var(--app-border);
+  color: var(--app-text-primary);
+}
+
+.app-table-header {
+  background-color: var(--app-surface-muted);
+  color: var(--app-text-secondary);
+}
+
+.app-table-row {
+  background-color: var(--app-surface);
+}
+
+.app-table-row:hover {
+  background-color: var(--app-surface-muted);
+}
+
+/* Resource Planning visual consistency */
+
+html:not([data-theme="dark"]) .app-card .bg-violet-600,
+html:not([data-theme="dark"]) .app-card .bg-violet-100.text-violet-700 {
+  background-color: #7c3aed !important;
+  color: #ffffff !important;
+}
+
+html:not([data-theme="dark"]) .app-card .bg-violet-600 svg,
+html:not([data-theme="dark"]) .app-card .bg-violet-100.text-violet-700 svg {
+  color: #ffffff !important;
+  stroke: currentColor !important;
+  opacity: 1 !important;
+}
+
+html:not([data-theme="dark"]) .app-card .bg-violet-100 {
+  color: #111827;
+}
+
+html:not([data-theme="dark"]) .app-card svg {
+  opacity: 1;
+}
+
+html:not([data-theme="dark"]) .app-card [class*="dark:text-"],
+html:not([data-theme="dark"]) .app-card [class*="dark:text-"] * {
+  color: #111827 !important;
+  opacity: 1 !important;
+}
+
+html[data-theme="dark"] .app-card .bg-violet-600 {
+  background-color: rgba(139, 92, 246, 0.2) !important;
+  color: #ede9fe !important;
+}
+
+html[data-theme="dark"] .app-card .bg-violet-600 svg {
+  color: #ede9fe !important;
+  stroke: currentColor !important;
+  opacity: 1 !important;
+}
