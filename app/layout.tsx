@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { ATSProvider } from "./providers/ATSProvider";
 import { ThemeProvider } from "./components/layout/ThemeProvider";
 import { Sidebar } from "./components/layout/Sidebar";
 import "./globals.css";
@@ -17,14 +16,12 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body>
-        <ATSProvider>
-          <ThemeProvider>
-            <div className="flex">
-              <Sidebar />
-              <main className="flex-1">{children}</main>
-            </div>
-          </ThemeProvider>
-        </ATSProvider>
+        <ThemeProvider>
+          <div className="flex">
+            <Sidebar />
+            <main className="flex-1">{children}</main>
+          </div>
+        </ThemeProvider>
       </body>
     </html>
   );

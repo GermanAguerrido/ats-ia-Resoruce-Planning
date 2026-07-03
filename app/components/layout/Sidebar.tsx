@@ -9,24 +9,12 @@ const menuItems = [
     href: "/",
   },
   {
-    label: "Clients",
-    href: "/clients",
-  },
-  {
-    label: "Projects",
-    href: "/projects",
-  },
-  {
     label: "Candidates",
     href: "/candidates",
   },
   {
     label: "Resource Planning",
     href: "/jobs",
-  },
-  {
-    label: "Interviews",
-    href: "/interviews",
   },
 ];
 
