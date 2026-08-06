@@ -70,6 +70,7 @@ export type PositionCard = {
   seniority: string;
   status: PositionStatus;
   owner: string;
+  quantity?: number;
   candidates: CandidateMini[];
 };
 
@@ -103,6 +104,7 @@ export const resourcePlanningMock: ProjectColumn[] = [
         seniority: "SR",
         status: "open",
         owner: "Ana",
+        quantity: 2,
         candidates: [
           {
             id: "cand-1",
@@ -212,6 +214,7 @@ export const resourcePlanningMock: ProjectColumn[] = [
         seniority: "SSR",
         status: "on_hold",
         owner: "Germán",
+        quantity: 1,
         candidates: [
           {
             id: "cand-3",
@@ -280,6 +283,7 @@ export const resourcePlanningMock: ProjectColumn[] = [
         seniority: "SR",
         status: "open",
         owner: "Sofía",
+        quantity: 2,
         candidates: [
           {
             id: "cand-4",
@@ -367,6 +371,7 @@ export const resourcePlanningMock: ProjectColumn[] = [
         seniority: "SSR",
         status: "hired",
         owner: "Ana",
+        quantity: 1,
         candidates: [
           {
             id: "cand-6",
@@ -436,6 +441,7 @@ export const resourcePlanningMock: ProjectColumn[] = [
         seniority: "SR",
         status: "on_hold",
         owner: "Germán",
+        quantity: 1,
         candidates: [],
       },
     ],
@@ -457,6 +463,7 @@ export const resourcePlanningMock: ProjectColumn[] = [
         seniority: "SR",
         status: "cancelled",
         owner: "Sofía",
+        quantity: 1,
         candidates: [],
       },
     ],

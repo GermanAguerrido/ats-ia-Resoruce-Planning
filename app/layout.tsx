@@ -17,10 +17,8 @@ export default function RootLayout({
     <html lang="es">
       <body>
         <ThemeProvider>
-          <div className="flex">
-            <Sidebar />
-            <main className="flex-1">{children}</main>
-          </div>
+          <Sidebar />
+          <main className="w-full">{children}</main>
         </ThemeProvider>
       </body>
     </html>

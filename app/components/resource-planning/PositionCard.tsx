@@ -1,4 +1,3 @@
-import { MessageSquare, UserRound } from "lucide-react";
 import type {
   CandidateMini,
   PositionCard as PositionCardType,
@@ -14,23 +13,31 @@ type Props = {
 const statusConfig = {
   open: {
     label: "Open",
-    className: "rp-position-open",
-    bar: "bg-violet-500",
+    bgClass: "bg-violet-500/30 dark:bg-violet-500/25",
+    borderClass: "border-violet-500/50",
+    badgeClass:
+      "bg-violet-500/30 text-violet-700 dark:text-violet-200 border border-violet-500/50",
   },
   hired: {
     label: "Hired",
-    className: "rp-position-hired",
-    bar: "bg-emerald-500",
+    bgClass: "bg-emerald-500/30 dark:bg-emerald-500/25",
+    borderClass: "border-emerald-500/50",
+    badgeClass:
+      "bg-emerald-500/30 text-emerald-700 dark:text-emerald-200 border border-emerald-500/50",
   },
   on_hold: {
     label: "On hold",
-    className: "rp-position-on-hold",
-    bar: "bg-amber-500",
+    bgClass: "bg-amber-500/30 dark:bg-amber-500/25",
+    borderClass: "border-amber-500/50",
+    badgeClass:
+      "bg-amber-500/30 text-amber-700 dark:text-amber-200 border border-amber-500/50",
   },
   cancelled: {
     label: "Cancelled",
-    className: "rp-position-cancelled",
-    bar: "bg-red-500",
+    bgClass: "bg-red-500/30 dark:bg-red-500/25",
+    borderClass: "border-red-500/50",
+    badgeClass:
+      "bg-red-500/30 text-red-700 dark:text-red-200 border border-red-500/50",
   },
 };
 
@@ -41,42 +48,34 @@ export function PositionCard({
 }: Props) {
   const config = statusConfig[position.status];
 
+  const totalToFill = position.quantity ?? 1;
+  const hiredCount = position.candidates.filter(
+    (c) => c.processStatus === "hired" || c.talentType === "trick_internal"
+  ).length;
+
   return (
     <article
       onClick={onClick}
-      className="cursor-pointer overflow-hidden rounded-2xl border shadow-sm transition app-border app-card hover:border-violet-500/40 hover:shadow-md"
+      className={`cursor-pointer overflow-hidden rounded-2xl border shadow-sm transition hover:shadow-md ${config.bgClass} ${config.borderClass}`}
     >
-      <div className={`h-1.5 ${config.bar}`} />
-
       <div className="p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="truncate text-sm font-semibold app-text-primary">
-              {position.title}
+              {position.title} · {position.seniority}
             </h3>
-
-            <p className="mt-1 text-xs app-text-secondary">
-              Seniority: {position.seniority}
-            </p>
           </div>
 
-          <span
-            className={`rp-board-badge shrink-0 rounded-full border px-2 py-1 text-[11px] font-semibold ${config.className}`}
-          >
-            {config.label}
-          </span>
-        </div>
-
-        <div className="mt-3 flex items-center justify-between text-xs app-text-secondary">
-          <span className="inline-flex items-center gap-1.5">
-            <UserRound className="h-3.5 w-3.5" />
-            {position.owner}
-          </span>
-
-          <span className="inline-flex items-center gap-1.5">
-            <MessageSquare className="h-3.5 w-3.5" />
-            Activity
-          </span>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="text-sm font-bold app-text-primary">
+              {hiredCount}/{totalToFill}
+            </span>
+            <span
+              className={`rounded-full px-2 py-1 text-[11px] font-semibold ${config.badgeClass}`}
+            >
+              {config.label}
+            </span>
+          </div>
         </div>
 
         <div className="mt-4 space-y-2">
@@ -89,7 +88,10 @@ export function PositionCard({
               />
             ))
           ) : (
-            <div className="rounded-xl border border-dashed px-3 py-3 text-xs app-border app-text-muted">
+            <div
+              className="rounded-xl border border-dashed px-3 py-3 text-xs app-text-muted"
+              style={{ borderColor: "var(--app-border)" }}
+            >
               No candidates linked yet
             </div>
           )}

@@ -6,12 +6,12 @@ import {
   FileText,
   PauseCircle,
   UserCheck,
+  Building2,
 } from "lucide-react";
 import type {
   CandidateMini,
   CandidateProcessStatus,
   CandidateResumeStatus,
-  CandidateTalentType,
 } from "@/app/data/resourcePlanningMock";
 
 type Props = {
@@ -80,24 +80,6 @@ const resumeStatusConfig: Record<
   resume_ready: {
     label: "Resume Ready",
     className: "rp-candidate-resume",
-  },
-};
-
-const talentTypeConfig: Record<
-  CandidateTalentType,
-  { label: string; className: string }
-> = {
-  external: {
-    label: "External",
-    className: "rp-status-badge",
-  },
-  internal_candidate: {
-    label: "Internal Candidate",
-    className: "rp-priority-badge",
-  },
-  trick_internal: {
-    label: "Trick Internal",
-    className: "rp-candidate-trick-internal",
   },
 };
 
@@ -203,6 +185,15 @@ function SignalIcon({ icon }: { icon: CandidateSignal["icon"] }) {
   return <UserCheck className="h-3 w-3" />;
 }
 
+function getRecruiterInitials(name: string): string {
+  if (!name) return "??";
+  const parts = name.trim().split(" ");
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
 export function CandidateMiniCard({ candidate, onClick }: Props) {
   const handleClick = (event: MouseEvent<HTMLDivElement>) => {
     event.stopPropagation();
@@ -214,91 +205,69 @@ export function CandidateMiniCard({ candidate, onClick }: Props) {
 
   const processStatus = processStatusConfig[candidate.processStatus];
   const resumeStatus = resumeStatusConfig[candidate.resumeStatus];
-  const talentType = talentTypeConfig[candidate.talentType];
   const signals = getCandidateSignals(candidate);
+
+  const isInternal =
+    candidate.talentType !== "external" ||
+    candidate.processStatus === "hired";
 
   return (
     <div
       onClick={handleClick}
-      className={`rounded-xl border p-3 transition app-border bg-black/[0.025] hover:bg-black/[0.04] dark:bg-white/[0.035] dark:hover:bg-white/[0.06] ${
+      className={`rounded-xl border p-3 transition app-border bg-white/20 hover:bg-white/30 dark:bg-white/[0.04] dark:hover:bg-white/[0.07] ${
         onClick ? "cursor-pointer hover:border-violet-500/40" : ""
       }`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium app-text-primary">
-            {candidate.name}
+          <p className="truncate text-sm font-bold app-text-primary">
+            {candidate.name} <span className="font-bold">· {candidate.role}</span>
           </p>
 
-          <p className="mt-0.5 truncate text-xs text-zinc-600 dark:text-zinc-400">
-            {candidate.role} · {candidate.location}
+          {/* País: mismo color que el nombre, sin bold */}
+          <p className="mt-0.5 truncate text-xs app-text-primary">
+            {candidate.location}
           </p>
         </div>
 
-        <div className="rp-avatar-badge flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold">
-          {candidate.name
-            .split(" ")
-            .map((part) => part[0])
-            .join("")
-            .slice(0, 2)}
-        </div>
-      </div>
-
-      <div className="mt-3 space-y-2">
-        <div>
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-            Process
-          </p>
-
-          <div className="flex flex-wrap gap-1.5">
-            <span
-              className={`rp-candidate-badge rounded-md px-2 py-1 text-[10px] font-semibold ${processStatus.className}`}
-            >
-              {processStatus.label}
-            </span>
+        {isInternal ? (
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-500/30 border border-violet-500/50">
+            <Building2 className="h-3.5 w-3.5 text-violet-600 dark:text-violet-300" />
           </div>
-        </div>
-
-        <div>
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-            Resume / Type
-          </p>
-
-          <div className="flex flex-wrap gap-1.5">
-            <span
-              className={`rp-candidate-badge rounded-md px-2 py-1 text-[10px] font-semibold ${resumeStatus.className}`}
-            >
-              {resumeStatus.label}
-            </span>
-
-            <span
-              className={`rp-candidate-badge rounded-md px-2 py-1 text-[10px] font-semibold ${talentType.className}`}
-            >
-              {talentType.label}
-            </span>
-          </div>
-        </div>
-
-        {signals.length > 0 && (
-          <div>
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              Auto signals
-            </p>
-
-            <div className="flex flex-wrap gap-1.5">
-              {signals.map((signal) => (
-                <span
-                  key={signal.id}
-                  className={`rp-auto-signal inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-semibold ${signal.className}`}
-                >
-                  <SignalIcon icon={signal.icon} />
-                  {signal.label}
-                </span>
-              ))}
-            </div>
+        ) : (
+          <div className="rp-avatar-badge flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold">
+            {getRecruiterInitials(candidate.recruiterOwner || "")}
           </div>
         )}
       </div>
+
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <span
+          className={`rp-candidate-badge rounded-md px-2 py-1 text-[10px] font-semibold ${processStatus.className}`}
+        >
+          {processStatus.label}
+        </span>
+
+        <span
+          className={`rp-candidate-badge rounded-md px-2 py-1 text-[10px] font-semibold ${resumeStatus.className}`}
+        >
+          {resumeStatus.label}
+        </span>
+      </div>
+
+      {signals.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {signals.map((signal) => (
+            <span
+              key={signal.id}
+              className={`rp-auto-signal inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-semibold ${signal.className}`}
+            >
+              <SignalIcon icon={signal.icon} />
+              {signal.label}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

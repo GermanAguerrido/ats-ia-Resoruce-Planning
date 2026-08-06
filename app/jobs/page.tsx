@@ -45,23 +45,23 @@ export default function JobsPage() {
 
   return (
     <main className="min-h-screen app-bg">
-      <div className="mx-auto flex max-w-[1600px] flex-col gap-6 px-6 py-6">
-        <div className="sticky top-0 z-20 -mx-6 border-b px-6 pb-6 pt-2 backdrop-blur-xl app-bg app-border">
-          <div className="flex flex-col gap-5">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-[0.2em] app-text-muted">
-                Resource Planning
-              </p>
-              <h1 className="mt-2 text-4xl font-semibold tracking-tight app-text-primary">
-                Pipeline Overview
-              </h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 app-text-secondary">
-                Manage projects, open positions, and candidate assignments.
-              </p>
-            </div>
-          </div>
+      {/* Header */}
+      <div className="sticky top-0 z-20 border-b px-6 py-4 backdrop-blur-xl app-bg app-border">
+        <div className="flex items-center justify-between">
+          <h1 className="text-4xl font-semibold tracking-tight app-text-primary">
+            Resource Planning
+          </h1>
+          <img
+            src="/trick-studios-logo.png.png"
+            alt="Trick Studios"
+            className="h-10 w-auto"
+          />
         </div>
+      </div>
 
+      {/* Content */}
+      <div className="mx-auto flex max-w-[1600px] flex-col gap-6 px-6 py-6">
+        {/* KANBAN BOARD */}
         <div className="overflow-x-auto pb-4">
           <div className="flex gap-4 min-w-max">
             {projectColumns.map((project) => (

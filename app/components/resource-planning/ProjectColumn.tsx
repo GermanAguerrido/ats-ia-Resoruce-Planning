@@ -1,4 +1,4 @@
-import { MoreHorizontal, Plus } from "lucide-react";
+import { Lock, Unlock, Plus } from "lucide-react";
 import type {
   CandidateMini,
   PositionCard as PositionCardType,
@@ -17,17 +17,51 @@ type Props = {
   ) => void;
 };
 
-const projectStatusLabel = {
-  active_search: "Active search",
-  active_no_search: "No open searches",
-  coming_soon: "Coming soon",
-  inactive: "Inactive",
+const statusConfig: Record<
+  ProjectColumnType["status"],
+  { label: string; className: string }
+> = {
+  active_search: {
+    label: "Active",
+    className:
+      "bg-violet-500/50 text-black dark:text-white border border-violet-500/70",
+  },
+  active_no_search: {
+    label: "No Open Searches",
+    className:
+      "bg-gray-500/50 text-black dark:text-white border border-gray-500/70",
+  },
+  coming_soon: {
+    label: "Coming Soon",
+    className:
+      "bg-teal-500/50 text-black dark:text-white border border-teal-500/70",
+  },
+  inactive: {
+    label: "Inactive",
+    className:
+      "bg-gray-500/50 text-black dark:text-white border border-gray-500/70",
+  },
 };
 
-const priorityLabel = {
-  high: "High priority",
-  medium: "Medium priority",
-  low: "Low priority",
+const priorityConfig: Record<
+  ProjectColumnType["priority"],
+  { label: string; className: string }
+> = {
+  high: {
+    label: "High Priority",
+    className:
+      "bg-red-500/50 text-black dark:text-white border border-red-500/70",
+  },
+  medium: {
+    label: "Medium Priority",
+    className:
+      "bg-yellow-500/50 text-black dark:text-white border border-yellow-500/70",
+  },
+  low: {
+    label: "Low Priority",
+    className:
+      "bg-green-500/50 text-black dark:text-white border border-green-500/70",
+  },
 };
 
 export function ProjectColumn({
@@ -36,32 +70,41 @@ export function ProjectColumn({
   onPositionClick,
   onCandidateClick,
 }: Props) {
+  const status = statusConfig[project.status];
+  const priority = priorityConfig[project.priority];
+
   return (
     <section className="flex h-full w-[340px] shrink-0 flex-col overflow-hidden rounded-2xl border app-border app-card">
-      <header className="flex items-start justify-between gap-3 border-b p-4 app-border">
-        <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold app-text-primary">
-            {project.clientName}
-          </h2>
+      <header className="border-b p-4 app-border">
+        <h2 className="text-base font-bold app-text-primary">
+          {project.projectName} - {project.clientName}
+        </h2>
 
-          <p className="mt-1 truncate text-xs app-text-secondary">
-            {project.projectName}
-          </p>
-
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            <span className="rp-status-badge rounded-full px-2 py-1 text-[11px] font-semibold">
-              {projectStatusLabel[project.status]}
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {project.confidential ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-red-500/70 bg-red-500/50 px-2 py-1 text-[11px] font-semibold text-black dark:text-white">
+              <Lock className="h-3 w-3" />
+              Confidential
             </span>
-
-            <span className="rp-priority-badge rounded-full px-2 py-1 text-[11px] font-semibold">
-              {priorityLabel[project.priority]}
+          ) : (
+            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/70 bg-emerald-500/50 px-2 py-1 text-[11px] font-semibold text-black dark:text-white">
+              <Unlock className="h-3 w-3" />
+              Public
             </span>
-          </div>
+          )}
+
+          <span
+            className={`inline-block rounded-full px-2 py-1 text-[11px] font-semibold ${status.className}`}
+          >
+            {status.label}
+          </span>
+
+          <span
+            className={`inline-block rounded-full px-2 py-1 text-[11px] font-semibold ${priority.className}`}
+          >
+            {priority.label}
+          </span>
         </div>
-
-        <button className="rounded-lg p-1.5 app-text-muted transition hover:bg-black/[0.04] dark:hover:bg-white/[0.06]">
-          <MoreHorizontal className="h-4 w-4" />
-        </button>
       </header>
 
       <div className="flex-1 space-y-3 overflow-y-auto p-3">
