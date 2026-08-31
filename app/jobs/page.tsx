@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ProjectColumn } from "../components/resource-planning/ProjectColumn";
 import { ResourcePlanningDetailModal } from "../components/resource-planning/ResourcePlanningDetailModal";
 import { resourcePlanningMock as initialProjectColumns } from "../data/resourcePlanningMock";
@@ -9,6 +9,10 @@ import type {
   CandidateMini,
   ProjectColumn as ProjectColumnType,
 } from "../data/resourcePlanningMock";
+
+type StatusFilter = "all" | "active" | "active_and_coming";
+
+export type PositionStatusFilter = "all" | "open" | "on_hold" | "hired" | "cancelled";
 
 export default function JobsPage() {
   const [projectColumns] = useState(initialProjectColumns);
@@ -22,6 +26,41 @@ export default function JobsPage() {
     project: ProjectColumnType;
     position: PositionCardType;
   } | null>(null);
+
+  // Filters
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [hideNoOpenSearches, setHideNoOpenSearches] = useState(false);
+  const [positionStatusFilter, setPositionStatusFilter] =
+    useState<PositionStatusFilter>("all");
+
+  const filteredProjects = useMemo(() => {
+    return projectColumns.filter((project) => {
+      // Filtro de estado de proyecto
+      const matchesStatus =
+        statusFilter === "all"
+          ? true
+          : statusFilter === "active"
+            ? project.status === "active_search"
+            : project.status === "active_search" || project.status === "coming_soon";
+
+      // Excluir proyectos sin open searches
+      const hasOpenPositions = project.positions.some(
+        (position) => position.status === "open"
+      );
+      const matchesOpenSearch = hideNoOpenSearches ? hasOpenPositions : true;
+
+      // Filtro por estado de posición: si el filtro está activo,
+      // solo mostrar proyectos que tengan al menos una posición con ese estado
+      const hasMatchingPosition =
+        positionStatusFilter === "all"
+          ? true
+          : project.positions.some(
+              (position) => position.status === positionStatusFilter
+            );
+
+      return matchesStatus && matchesOpenSearch && hasMatchingPosition;
+    });
+  }, [projectColumns, statusFilter, hideNoOpenSearches, positionStatusFilter]);
 
   const activeModalData = selectedCandidate
     ? {
@@ -57,6 +96,75 @@ export default function JobsPage() {
             className="h-10 w-auto"
           />
         </div>
+
+        {/* Filter Bar */}
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          {/* Project status filter */}
+          <div className="flex gap-1 rounded-lg border p-1 app-border">
+            {(
+              [
+                { value: "all", label: "All Projects" },
+                { value: "active", label: "Active Only" },
+                { value: "active_and_coming", label: "Active + Coming Soon" },
+              ] as Array<{ value: StatusFilter; label: string }>
+            ).map((option) => (
+              <button
+                key={option.value}
+                onClick={() => setStatusFilter(option.value)}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                  statusFilter === option.value
+                    ? "bg-violet-500 text-white"
+                    : "app-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Position status filter */}
+          <div className="flex gap-1 rounded-lg border p-1 app-border">
+            {(
+              [
+                { value: "all", label: "All Positions" },
+                { value: "open", label: "Open" },
+                { value: "on_hold", label: "On Hold" },
+                { value: "hired", label: "Hired" },
+                { value: "cancelled", label: "Cancelled" },
+              ] as Array<{ value: PositionStatusFilter; label: string }>
+            ).map((option) => (
+              <button
+                key={option.value}
+                onClick={() => setPositionStatusFilter(option.value)}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                  positionStatusFilter === option.value
+                    ? "bg-violet-500 text-white"
+                    : "app-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Hide no open searches toggle */}
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 app-border">
+            <input
+              type="checkbox"
+              checked={hideNoOpenSearches}
+              onChange={(event) => setHideNoOpenSearches(event.target.checked)}
+              className="h-4 w-4 accent-violet-600"
+            />
+            <span className="text-xs font-medium app-text-secondary">
+              Only projects with open positions
+            </span>
+          </label>
+
+          {/* Result count */}
+          <span className="text-xs app-text-muted">
+            {filteredProjects.length} of {projectColumns.length} projects
+          </span>
+        </div>
       </div>
 
       {/* Content */}
@@ -64,10 +172,11 @@ export default function JobsPage() {
         {/* KANBAN BOARD */}
         <div className="overflow-x-auto pb-4">
           <div className="flex gap-4 min-w-max">
-            {projectColumns.map((project) => (
+            {filteredProjects.map((project) => (
               <ProjectColumn
                 key={project.id}
                 project={project}
+                positionStatusFilter={positionStatusFilter}
                 onProjectClick={() => {
                   setSelectedProject(project);
                   setSelectedPosition(null);
@@ -86,6 +195,12 @@ export default function JobsPage() {
               />
             ))}
           </div>
+
+          {filteredProjects.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-12">
+              <p className="text-lg app-text-muted">No projects match the current filters</p>
+            </div>
+          )}
         </div>
       </div>
 

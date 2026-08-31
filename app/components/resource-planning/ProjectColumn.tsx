@@ -4,11 +4,13 @@ import type {
   PositionCard as PositionCardType,
   ProjectColumn as ProjectColumnType,
 } from "@/app/data/resourcePlanningMock";
+import type { PositionStatusFilter } from "@/app/jobs/page";
 import { ProjectMainCard } from "./ProjectMainCard";
 import { PositionCard } from "./PositionCard";
 
 type Props = {
   project: ProjectColumnType;
+  positionStatusFilter?: PositionStatusFilter;
   onProjectClick: () => void;
   onPositionClick: (position: PositionCardType) => void;
   onCandidateClick: (
@@ -66,6 +68,7 @@ const priorityConfig: Record<
 
 export function ProjectColumn({
   project,
+  positionStatusFilter = "all",
   onProjectClick,
   onPositionClick,
   onCandidateClick,
@@ -73,9 +76,21 @@ export function ProjectColumn({
   const status = statusConfig[project.status];
   const priority = priorityConfig[project.priority];
 
+  // Filtrar posiciones según el filtro de estado
+  const visiblePositions =
+    positionStatusFilter === "all"
+      ? project.positions
+      : project.positions.filter(
+          (position) => position.status === positionStatusFilter
+        );
+
   return (
     <section className="flex h-full w-[340px] shrink-0 flex-col overflow-hidden rounded-2xl border app-border app-card">
-      <header className="border-b p-4 app-border">
+      {/* Header STICKY */}
+      <header
+        className="sticky top-0 z-10 border-b p-4 app-border backdrop-blur-xl"
+        style={{ backgroundColor: "var(--app-surface)" }}
+      >
         <h2 className="text-base font-bold app-text-primary">
           {project.projectName} - {project.clientName}
         </h2>
@@ -116,11 +131,15 @@ export function ProjectColumn({
               Positions
             </p>
 
-            <p className="text-xs app-text-muted">{project.positions.length}</p>
+            <p className="text-xs app-text-muted">
+              {visiblePositions.length}
+              {visiblePositions.length !== project.positions.length &&
+                ` / ${project.positions.length}`}
+            </p>
           </div>
 
           <div className="space-y-3">
-            {project.positions.map((position) => (
+            {visiblePositions.map((position) => (
               <PositionCard
                 key={position.id}
                 position={position}
@@ -130,6 +149,15 @@ export function ProjectColumn({
                 }
               />
             ))}
+
+            {visiblePositions.length === 0 && (
+              <div
+                className="rounded-xl border border-dashed px-3 py-4 text-center text-xs app-text-muted"
+                style={{ borderColor: "var(--app-border)" }}
+              >
+                No positions match this filter
+              </div>
+            )}
           </div>
         </div>
 
