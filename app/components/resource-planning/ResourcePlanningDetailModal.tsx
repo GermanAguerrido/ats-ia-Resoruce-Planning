@@ -3,13 +3,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
+  Archive,
   ArrowLeft,
   ArrowRight,
   ArrowUp,
   Bold,
   BookOpen,
   BriefcaseBusiness,
-  CalendarDays,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
@@ -17,8 +17,10 @@ import {
   Clock3,
   DollarSign,
   FileText,
+  Flag,
   FlaskConical,
   Globe,
+  ImageIcon,
   Italic,
   LinkIcon,
   List,
@@ -30,6 +32,7 @@ import {
   Paperclip,
   PauseCircle,
   Plus,
+  Search,
   ShieldCheck,
   Smile,
   Underline,
@@ -88,6 +91,12 @@ type Props = {
     projectId: string,
     updates: ProjectOverride
   ) => void;
+  onProjectArchive?: (projectId: string) => void;
+  onAddPosition?: (project: ProjectColumnType) => void;
+  onAddCandidate?: (
+    project: ProjectColumnType,
+    position: PositionCardType
+  ) => void;
 };
 
 type LocalActivity = {
@@ -123,6 +132,7 @@ type QuickActionId =
   | "add_project_member"
   | "mark_as_confidential"
   | "request_client_follow_up"
+  | "archive_project"
   | "mention_user";
 
 type QuickActionResult = {
@@ -677,7 +687,265 @@ function getQuickActionOptions(
     { id: "add_project_member", label: "Add project member" },
     { id: "mark_as_confidential", label: "Mark as confidential" },
     { id: "request_client_follow_up", label: "Request client follow-up" },
+    { id: "archive_project", label: "Archive project" },
   ];
+}
+
+type ChipTone = "violet" | "green" | "blue" | "amber" | "red" | "gray";
+
+const projectStatusTone: Record<ProjectStatus, ChipTone> = {
+  active_search: "violet",
+  active_no_search: "gray",
+  coming_soon: "amber",
+  inactive: "red",
+};
+
+const positionStatusTone: Record<PositionCardType["status"], ChipTone> = {
+  open: "violet",
+  hired: "green",
+  on_hold: "amber",
+  cancelled: "red",
+};
+
+const priorityTone: Record<ProjectPriority, ChipTone> = {
+  high: "red",
+  medium: "amber",
+  low: "gray",
+};
+
+const priorityLabel: Record<ProjectPriority, string> = {
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+};
+
+const OWNER_OPTIONS = ["Ana", "Germán", "Sofía"];
+
+const SMALL_BUTTON_CLASS =
+  "inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-semibold app-border app-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.06]";
+
+type ResourceLink = {
+  id: string;
+  title: string;
+  url: string;
+};
+
+type ResourceFile = {
+  id: string;
+  name: string;
+  size: number;
+};
+
+type ProjectInfo = {
+  owner: string;
+  links: ResourceLink[];
+  files: ResourceFile[];
+};
+
+function makeId() {
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function plural(count: number, one: string, many: string) {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function normalizeUrl(url: string) {
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+}
+
+function useStoredState<T>(storageKey: string, initialValue: T) {
+  const [value, setValue] = useState<T>(initialValue);
+
+  useEffect(() => {
+    try {
+      const rawValue = window.localStorage.getItem(storageKey);
+
+      setValue(rawValue ? (JSON.parse(rawValue) as T) : initialValue);
+    } catch {
+      setValue(initialValue);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey]);
+
+  const updateValue = (nextValue: T) => {
+    setValue(nextValue);
+
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(nextValue));
+    } catch {
+      // Local storage can fail in private browsing or quota situations.
+    }
+  };
+
+  return [value, updateValue] as const;
+}
+
+function getPositionStats(position: PositionCardType) {
+  const total = position.candidates.length;
+  const quantity = position.quantity ?? 1;
+  const hired = position.candidates.filter(
+    (candidate) =>
+      candidate.processStatus === "hired" ||
+      candidate.talentType === "trick_internal"
+  ).length;
+  const ready = position.candidates.filter(
+    (candidate) =>
+      candidate.resumeStatus === "resume_ready" &&
+      candidate.processStatus !== "hired" &&
+      candidate.processStatus !== "rejected"
+  ).length;
+
+  return { total, quantity, hired, ready };
+}
+
+function getProjectInsights(project: ProjectColumnType): AutomationInsight[] {
+  const insights: AutomationInsight[] = [];
+  const openPositions = project.positions.filter(
+    (position) => position.status === "open"
+  );
+  const onHoldPositions = project.positions.filter(
+    (position) => position.status === "on_hold"
+  );
+  const totalCandidates = project.positions.reduce(
+    (acc, position) => acc + position.candidates.length,
+    0
+  );
+  const readyCandidates = project.positions.reduce(
+    (acc, position) => acc + getPositionStats(position).ready,
+    0
+  );
+
+  if (onHoldPositions.length > 0) {
+    insights.push({
+      id: "positions-on-hold",
+      title: onHoldPositions.length === 1 ? "Position on hold" : "Positions on hold",
+      description:
+        onHoldPositions.length === 1
+          ? `${onHoldPositions[0].title} · ${onHoldPositions[0].seniority} is on hold. Review it with the client.`
+          : `${onHoldPositions.length} positions are on hold. Review them with the client.`,
+      severity: "warning",
+      icon: "pause",
+    });
+  }
+
+  if (openPositions.length === 0 && project.status === "active_search") {
+    insights.push({
+      id: "no-open-positions",
+      title: "No open positions",
+      description:
+        "This project is marked as active search but has no open positions. Consider updating its status.",
+      severity: "warning",
+      icon: "alert",
+    });
+  }
+
+  if (openPositions.length === 0 && project.status === "active_no_search") {
+    insights.push({
+      id: "ready-to-archive",
+      title: "Ready to archive",
+      description:
+        "There are no open searches. You can archive this project and keep its history.",
+      severity: "info",
+      icon: "file",
+    });
+  }
+
+  if (openPositions.length > 0) {
+    insights.push({
+      id: "pipeline",
+      title: "Pipeline",
+      description: `${plural(totalCandidates, "candidate", "candidates")} linked to ${plural(
+        openPositions.length,
+        "open position",
+        "open positions"
+      )}, ${readyCandidates} ready to present.`,
+      severity: readyCandidates > 0 ? "success" : "info",
+      icon: readyCandidates > 0 ? "check" : "user",
+    });
+  }
+
+  return insights;
+}
+
+function getPositionInsights(position: PositionCardType): AutomationInsight[] {
+  const insights: AutomationInsight[] = [];
+  const { total, quantity, hired, ready } = getPositionStats(position);
+
+  if (position.status === "on_hold") {
+    insights.push({
+      id: "position-on-hold",
+      title: "Position on hold",
+      description:
+        "Aging should be treated differently while this position is paused.",
+      severity: "warning",
+      icon: "pause",
+    });
+  }
+
+  if (position.status === "cancelled") {
+    insights.push({
+      id: "position-cancelled",
+      title: "Position cancelled",
+      description: "This position was cancelled and no longer accepts candidates.",
+      severity: "neutral",
+      icon: "alert",
+    });
+  }
+
+  if (hired > 0) {
+    insights.push({
+      id: "position-hired",
+      title: hired === 1 ? "Candidate hired" : "Candidates hired",
+      description: `${hired} of ${quantity} requested openings are covered.`,
+      severity: "success",
+      icon: "user",
+    });
+  }
+
+  if (position.status === "open" && total === 0) {
+    insights.push({
+      id: "no-candidates",
+      title: "No candidates yet",
+      description:
+        "Add candidates or request more profiles to start the process.",
+      severity: "warning",
+      icon: "alert",
+    });
+  }
+
+  if (position.status === "open" && ready > 0) {
+    insights.push({
+      id: "ready-to-present",
+      title: "Ready to present",
+      description: `${plural(
+        ready,
+        "candidate has",
+        "candidates have"
+      )} a resume ready and can go to client review.`,
+      severity: "success",
+      icon: "check",
+    });
+  }
+
+  if (position.status === "open" && total > 0 && ready === 0) {
+    insights.push({
+      id: "in-process",
+      title: "In process",
+      description: `${plural(total, "candidate", "candidates")} in process, none ready to present yet.`,
+      severity: "info",
+      icon: "clock",
+    });
+  }
+
+  return insights;
 }
 
 export function ResourcePlanningDetailModal({
@@ -688,6 +956,9 @@ export function ResourcePlanningDetailModal({
   onCandidateUpdate,
   onPositionUpdate,
   onProjectUpdate,
+  onProjectArchive,
+  onAddPosition,
+  onAddCandidate,
 }: Props) {
   const [selectedPosition, setSelectedPosition] =
     useState<PositionCardType | null>(initialPosition);
@@ -711,12 +982,23 @@ export function ResourcePlanningDetailModal({
 
   const effectiveProject = applyProjectOverride(project, projectOverrides);
 
-  const effectiveSelectedPosition = selectedPosition
-    ? applyPositionOverride(selectedPosition, positionOverrides)
+  const livePosition = selectedPosition
+    ? (project.positions.find((position) => position.id === selectedPosition.id) ??
+      selectedPosition)
     : null;
 
-  const effectiveSelectedCandidate = selectedCandidate
-    ? applyCandidateOverride(selectedCandidate, candidateOverrides)
+  const liveCandidate = selectedCandidate
+    ? ((livePosition ?? selectedPosition)?.candidates.find(
+        (candidate) => candidate.id === selectedCandidate.id
+      ) ?? selectedCandidate)
+    : null;
+
+  const effectiveSelectedPosition = livePosition
+    ? applyPositionOverride(livePosition, positionOverrides)
+    : null;
+
+  const effectiveSelectedCandidate = liveCandidate
+    ? applyCandidateOverride(liveCandidate, candidateOverrides)
     : null;
 
   const isCandidateView = Boolean(effectiveSelectedCandidate);
@@ -910,6 +1192,21 @@ export function ResourcePlanningDetailModal({
       };
     }
 
+    if (actionId === "archive_project") {
+      if (effectiveProject.status !== "active_no_search") {
+        return {
+          activityText:
+            "Archive skipped: the project still has open searches.",
+        };
+      }
+
+      onProjectArchive?.(effectiveProject.id);
+
+      return {
+        activityText: "Archived project.",
+      };
+    }
+
     if (!effectiveSelectedCandidate) {
       return {
         activityText: "Quick action executed locally.",
@@ -1090,6 +1387,34 @@ export function ResourcePlanningDetailModal({
     }
   };
 
+  const handleProjectChange = (updates: ProjectOverride, activityText: string) => {
+    updateProjectOverride(effectiveProject.id, updates);
+    addActivity(activityText, "action");
+  };
+
+  const handlePositionChange = (updates: PositionOverride, activityText: string) => {
+    if (!effectiveSelectedPosition) {
+      return;
+    }
+
+    updatePositionOverride(effectiveSelectedPosition.id, updates);
+    addActivity(activityText, "action");
+  };
+
+  const positionIndex = effectiveSelectedPosition
+    ? effectiveProject.positions.findIndex(
+        (position) => position.id === effectiveSelectedPosition.id
+      )
+    : -1;
+
+  const previousPosition =
+    positionIndex > 0 ? effectiveProject.positions[positionIndex - 1] : null;
+
+  const nextPosition =
+    positionIndex >= 0 && positionIndex < effectiveProject.positions.length - 1
+      ? effectiveProject.positions[positionIndex + 1]
+      : null;
+
   const quickActionOptions = getQuickActionOptions(
     mode,
     effectiveSelectedCandidate,
@@ -1218,6 +1543,26 @@ export function ResourcePlanningDetailModal({
                   />
                 )}
 
+              {isPositionView && effectiveSelectedPosition && (
+                <CandidatePager
+                  entityLabel="position"
+                  currentIndex={positionIndex}
+                  total={effectiveProject.positions.length}
+                  hasPrevious={Boolean(previousPosition)}
+                  hasNext={Boolean(nextPosition)}
+                  onPrevious={() => {
+                    if (previousPosition) {
+                      setSelectedPosition(previousPosition);
+                    }
+                  }}
+                  onNext={() => {
+                    if (nextPosition) {
+                      setSelectedPosition(nextPosition);
+                    }
+                  }}
+                />
+              )}
+
               <button
                 className="rounded-xl border p-2 transition app-border app-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
                 aria-label="Attachments"
@@ -1254,6 +1599,15 @@ export function ResourcePlanningDetailModal({
           {isCandidateView && effectiveSelectedCandidate && (
             <CandidateHeaderSummary candidate={effectiveSelectedCandidate} />
           )}
+
+          {isPositionView && effectiveSelectedPosition && (
+            <PositionHeaderSummary
+              project={effectiveProject}
+              position={effectiveSelectedPosition}
+            />
+          )}
+
+          {isProjectView && <ProjectHeaderSummary project={effectiveProject} />}
         </header>
 
         <div className="grid h-[78vh] min-h-[620px] grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_380px] lg:grid-rows-[minmax(0,1fr)]">
@@ -1262,6 +1616,10 @@ export function ResourcePlanningDetailModal({
               <ProjectDetailContent
                 project={effectiveProject}
                 onPositionClick={setSelectedPosition}
+                onProjectChange={handleProjectChange}
+                onLogActivity={(text) => addActivity(text, "action")}
+                onArchive={() => handleQuickActionClick("archive_project")}
+                onAddPosition={() => onAddPosition?.(effectiveProject)}
               />
             )}
 
@@ -1270,6 +1628,11 @@ export function ResourcePlanningDetailModal({
                 project={effectiveProject}
                 position={effectiveSelectedPosition}
                 onCandidateClick={setSelectedCandidate}
+                onPositionChange={handlePositionChange}
+                onLogActivity={(text) => addActivity(text, "action")}
+                onAddCandidate={() =>
+                  onAddCandidate?.(effectiveProject, effectiveSelectedPosition)
+                }
               />
             )}
 
@@ -1406,179 +1769,715 @@ function NavigationControls({
   );
 }
 
+function RpChip({ tone, children }: { tone: ChipTone; children: ReactNode }) {
+  return <span className={`rp-chip rp-chip-${tone}`}>{children}</span>;
+}
+
+function InsightsGrid({
+  insights,
+  emptyText,
+}: {
+  insights: AutomationInsight[];
+  emptyText: string;
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex items-center gap-2">
+        <Zap className="h-3.5 w-3.5 text-violet-500" />
+        <p className="text-xs font-semibold uppercase tracking-wide app-text-muted">
+          Automation insights
+        </p>
+      </div>
+
+      <div className="grid gap-2.5 md:grid-cols-3">
+        {insights.length > 0 ? (
+          insights.map((insight) => (
+            <div
+              key={insight.id}
+              className={`rp-detail-insight flex items-start gap-3 rounded-xl border px-3 py-2.5 ${automationInsightClassName(
+                insight.severity
+              )}`}
+            >
+              <div className="mt-0.5 shrink-0">
+                <AutomationIcon icon={insight.icon} />
+              </div>
+
+              <div className="min-w-0">
+                <p className="text-xs font-bold">{insight.title}</p>
+                <p className="mt-0.5 text-xs leading-5">{insight.description}</p>
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="rounded-xl border border-dashed px-3 py-3 text-center text-sm app-border app-text-muted md:col-span-3">
+            {emptyText}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProjectHeaderSummary({ project }: { project: ProjectColumnType }) {
+  const openPositions = project.positions.filter(
+    (position) => position.status === "open"
+  ).length;
+
+  return (
+    <div className="mt-4 space-y-4">
+      <div className="flex flex-wrap items-center gap-3 md:flex-nowrap md:overflow-x-auto">
+        <RpChip tone={projectStatusTone[project.status]}>
+          <Search aria-hidden="true" />
+          {projectStatusConfig[project.status].label}
+        </RpChip>
+
+        <RpChip tone={priorityTone[project.priority]}>
+          <Flag aria-hidden="true" />
+          {priorityLabel[project.priority]} priority
+        </RpChip>
+
+        {project.confidential ? (
+          <RpChip tone="red">
+            <Lock aria-hidden="true" />
+            Confidential
+          </RpChip>
+        ) : (
+          <RpChip tone="green">
+            <Unlock aria-hidden="true" />
+            Public
+          </RpChip>
+        )}
+
+        <RpChip tone="blue">
+          <BriefcaseBusiness aria-hidden="true" />
+          {plural(openPositions, "open position", "open positions")}
+        </RpChip>
+      </div>
+
+      <InsightsGrid
+        insights={getProjectInsights(project)}
+        emptyText="No automation insights for this project yet."
+      />
+    </div>
+  );
+}
+
+function PositionHeaderSummary({
+  project,
+  position,
+}: {
+  project: ProjectColumnType;
+  position: PositionCardType;
+}) {
+  const { quantity, hired } = getPositionStats(position);
+
+  return (
+    <div className="mt-4 space-y-4">
+      <div className="flex flex-wrap items-center gap-3 md:flex-nowrap md:overflow-x-auto">
+        <RpChip tone={positionStatusTone[position.status]}>
+          <BriefcaseBusiness aria-hidden="true" />
+          {positionStatusConfig[position.status].label}
+        </RpChip>
+
+        <RpChip tone={priorityTone[project.priority]}>
+          <Flag aria-hidden="true" />
+          {priorityLabel[project.priority]} priority
+        </RpChip>
+
+        {project.confidential ? (
+          <RpChip tone="red">
+            <Lock aria-hidden="true" />
+            Confidential
+          </RpChip>
+        ) : (
+          <RpChip tone="green">
+            <Unlock aria-hidden="true" />
+            Public
+          </RpChip>
+        )}
+
+        <RpChip tone={hired >= quantity ? "green" : "amber"}>
+          <Users aria-hidden="true" />
+          {hired} / {quantity} hired
+        </RpChip>
+      </div>
+
+      <InsightsGrid
+        insights={getPositionInsights(position)}
+        emptyText="No automation insights for this position yet."
+      />
+    </div>
+  );
+}
+
+function SectionLabel({
+  icon,
+  action,
+  children,
+}: {
+  icon?: ReactNode;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="mb-2 flex items-center justify-between gap-3">
+      <div className="flex items-center gap-2">
+        {icon}
+        <p className="text-xs font-semibold uppercase tracking-wide app-text-muted">
+          {children}
+        </p>
+      </div>
+
+      {action}
+    </div>
+  );
+}
+
+function FileAttachButton({
+  label,
+  onFiles,
+}: {
+  label: string;
+  onFiles: (files: ResourceFile[]) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          const pickedFiles = Array.from<File>(event.target.files ?? []).map((file) => ({
+            id: makeId(),
+            name: file.name,
+            size: file.size,
+          }));
+
+          if (pickedFiles.length > 0) {
+            onFiles(pickedFiles);
+          }
+
+          event.target.value = "";
+        }}
+      />
+
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        className={SMALL_BUTTON_CLASS}
+      >
+        <Paperclip className="h-3.5 w-3.5" />
+        {label}
+      </button>
+    </>
+  );
+}
+
+type ResourceRowProps = {
+  icon: ReactNode;
+  title: string;
+  subtitle: string;
+  href?: string;
+  onRemove: () => void;
+};
+
+function ResourceRow({ icon, title, subtitle, href, onRemove }: ResourceRowProps) {
+  return (
+    <div className="flex items-center gap-3 border-t px-4 py-2.5 first:border-t-0 app-border">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-500/15 text-violet-500">
+        {icon}
+      </div>
+
+      <div className="min-w-0 flex-1">
+        {href ? (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block truncate text-sm font-semibold app-text-primary hover:underline"
+          >
+            {title}
+          </a>
+        ) : (
+          <p className="truncate text-sm font-semibold app-text-primary">{title}</p>
+        )}
+
+        <p className="truncate text-xs app-text-muted">{subtitle}</p>
+      </div>
+
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove ${title}`}
+        className="rounded-lg p-1.5 transition app-text-muted rp-row-hover"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+type RichTextEditorProps = {
+  storageKey: string;
+  initialText?: string;
+  placeholder: string;
+  ariaLabel: string;
+};
+
+function RichTextEditor({
+  storageKey,
+  initialText,
+  placeholder,
+  ariaLabel,
+}: RichTextEditorProps) {
+  const editorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+
+    if (!editor) {
+      return;
+    }
+
+    let storedContent: string | null = null;
+
+    try {
+      storedContent = window.localStorage.getItem(storageKey);
+    } catch {
+      storedContent = null;
+    }
+
+    editor.innerHTML =
+      storedContent ?? escapeHtml(initialText || "").replace(/\n/g, "<br>");
+  }, [storageKey, initialText]);
+
+  const persistContent = () => {
+    const editor = editorRef.current;
+
+    if (!editor) {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(storageKey, editor.innerHTML);
+    } catch {
+      // Local storage can fail in private browsing or quota situations.
+    }
+  };
+
+  const runCommand = (command: string) => {
+    editorRef.current?.focus();
+    document.execCommand(command);
+    persistContent();
+  };
+
+  const toolbarButtons = [
+    { command: "bold", label: "Bold", icon: <Bold className="h-3.5 w-3.5" /> },
+    { command: "italic", label: "Italic", icon: <Italic className="h-3.5 w-3.5" /> },
+    { command: "underline", label: "Underline", icon: <Underline className="h-3.5 w-3.5" /> },
+    { command: "insertUnorderedList", label: "Bulleted list", icon: <List className="h-3.5 w-3.5" /> },
+    { command: "insertOrderedList", label: "Numbered list", icon: <ListOrdered className="h-3.5 w-3.5" /> },
+  ];
+
+  return (
+    <div className="overflow-hidden rounded-xl border app-border app-card">
+      <div className="flex gap-1 border-b px-3 py-2 app-border">
+        {toolbarButtons.map((button) => (
+          <button
+            key={button.command}
+            type="button"
+            title={button.label}
+            aria-label={button.label}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => runCommand(button.command)}
+            className="rounded-lg p-1.5 transition app-text-secondary hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
+          >
+            {button.icon}
+          </button>
+        ))}
+      </div>
+
+      <div
+        ref={editorRef}
+        contentEditable
+        role="textbox"
+        aria-multiline="true"
+        aria-label={ariaLabel}
+        data-placeholder={placeholder}
+        spellCheck={false}
+        onInput={persistContent}
+        className="rp-notes-editor min-h-[130px] px-4 py-3 text-sm leading-6 outline-none app-text-primary"
+      />
+    </div>
+  );
+}
+
 type ProjectDetailContentProps = {
   project: ProjectColumnType;
   onPositionClick: (position: PositionCardType) => void;
+  onProjectChange: (updates: ProjectOverride, activityText: string) => void;
+  onLogActivity: (text: string) => void;
+  onArchive: () => void;
+  onAddPosition: () => void;
 };
 
 function ProjectDetailContent({
   project,
   onPositionClick,
+  onProjectChange,
+  onLogActivity,
+  onArchive,
+  onAddPosition,
 }: ProjectDetailContentProps) {
-  const projectConfig = projectStatusConfig[project.status];
-
-  const openPositions = project.positions.filter(
-    (position) => position.status === "open"
-  ).length;
-
-  const totalCandidates = project.positions.reduce(
-    (acc, position) => acc + position.candidates.length,
-    0
+  const [info, setInfo] = useStoredState<ProjectInfo>(
+    `rp-project-info:${project.id}`,
+    { owner: "", links: [], files: [] }
   );
+  const [isAddingLink, setIsAddingLink] = useState(false);
+  const [linkTitle, setLinkTitle] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
+
+  const links = info.links ?? [];
+  const files = info.files ?? [];
+  const canArchive = project.status === "active_no_search";
+
+  const addLink = () => {
+    const url = linkUrl.trim();
+
+    if (!url) {
+      return;
+    }
+
+    setInfo({
+      ...info,
+      links: [...links, { id: makeId(), title: linkTitle.trim() || url, url }],
+    });
+    onLogActivity("Added a project link.");
+    setLinkTitle("");
+    setLinkUrl("");
+    setIsAddingLink(false);
+  };
 
   return (
     <div className="space-y-5">
-      <section className="flex flex-wrap gap-2">
-        <button className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium app-border app-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.06]">
-          <Plus className="h-4 w-4" />
-          Add position
-        </button>
-
-        <button className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium app-border app-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.06]">
-          <Users className="h-4 w-4" />
-          Members
-        </button>
-
-        <button className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium app-border app-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.06]">
-          <Paperclip className="h-4 w-4" />
-          Attachment
-        </button>
-      </section>
-
-      <section>
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide app-text-muted">
-          Labels
-        </p>
-
-        <div className="flex flex-wrap gap-2">
-          <span
-            className={`rp-board-badge rounded-md border px-3 py-1.5 text-xs font-semibold ${projectConfig.className}`}
-          >
-            {projectConfig.label}
-          </span>
-
-          <span className="rp-priority-badge rounded-md px-3 py-1.5 text-xs font-semibold">
-            {project.priority.toUpperCase()} PRIORITY
-          </span>
-
-          {project.confidential ? (
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-red-500/40 bg-red-600 px-3 py-1.5 text-xs font-semibold text-white">
-              <Lock className="h-3.5 w-3.5" />
-              CONFIDENTIAL
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white">
-              <Unlock className="h-3.5 w-3.5" />
-              PUBLIC
-            </span>
-          )}
-        </div>
-      </section>
-
       <section className="overflow-hidden rounded-2xl border app-border app-card">
-        <div className="relative h-52 overflow-hidden">
+        <div className="relative h-40 overflow-hidden">
           <img
             src={project.cover}
             alt={project.projectName}
             className="h-full w-full object-cover"
           />
 
-          <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/10 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-transparent" />
 
-          <div className="absolute bottom-4 left-4 right-4">
-            <p className="text-sm font-medium text-white/80">
-              {project.clientName}
-            </p>
+          <button
+            type="button"
+            title="Available when the backend is connected"
+            className="absolute right-3 top-3 inline-flex items-center gap-2 rounded-xl border border-white/25 bg-black/45 px-3 py-1.5 text-xs font-semibold text-white"
+          >
+            <ImageIcon className="h-3.5 w-3.5" />
+            Change cover
+          </button>
 
-            <h3 className="text-2xl font-semibold text-white">
-              {project.projectName}
-            </h3>
+          <div className="absolute bottom-3 left-4 right-4">
+            <p className="text-sm font-medium text-white/80">{project.clientName}</p>
+            <h3 className="text-2xl font-semibold text-white">{project.projectName}</h3>
           </div>
         </div>
 
         <div className="p-4">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="h-4 w-4 app-text-secondary" />
-            <h3 className="text-sm font-semibold app-text-primary">
-              Project brief
-            </h3>
-          </div>
+          <SectionLabel icon={<ShieldCheck className="h-3.5 w-3.5 app-text-muted" />}>
+            Project brief
+          </SectionLabel>
 
-          <p className="mt-3 text-sm leading-6 app-text-secondary">
-            {project.description}
-          </p>
-
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <InfoBox label="Open positions">{openPositions}</InfoBox>
-            <InfoBox label="Candidates linked">{totalCandidates}</InfoBox>
-            <InfoBox label="Project status">{projectConfig.label}</InfoBox>
-            <InfoBox label="Confidential">
-              {project.confidential ? "Yes" : "No"}
-            </InfoBox>
-          </div>
+          <RichTextEditor
+            storageKey={`rp-brief:project:${project.id}`}
+            initialText={project.description}
+            placeholder="Describe the project..."
+            ariaLabel="Project brief"
+          />
         </div>
       </section>
 
-      <section className="rounded-2xl border p-4 app-border app-card">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <BriefcaseBusiness className="h-4 w-4 app-text-secondary" />
-            <h3 className="text-sm font-semibold app-text-primary">
-              Project positions
-            </h3>
-          </div>
+      <section>
+        <SectionLabel>Project details</SectionLabel>
 
-          <span className="rounded-full border px-2 py-1 text-xs app-border app-text-secondary">
-            {project.positions.length}
-          </span>
+        <div className="overflow-hidden rounded-xl border app-border app-card">
+          <PersonalInfoRow icon={<Search />} label="Status">
+            <select
+              className="rp-select"
+              value={project.status}
+              onChange={(event) => {
+                const nextStatus = event.target.value as ProjectStatus;
+
+                onProjectChange(
+                  { status: nextStatus },
+                  `Changed project status to ${projectStatusConfig[nextStatus].label}.`
+                );
+              }}
+            >
+              {(Object.keys(projectStatusConfig) as ProjectStatus[]).map((status) => (
+                <option key={status} value={status}>
+                  {projectStatusConfig[status].label}
+                </option>
+              ))}
+            </select>
+          </PersonalInfoRow>
+
+          <PersonalInfoRow icon={<Flag />} label="Priority">
+            <select
+              className="rp-select"
+              value={project.priority}
+              onChange={(event) => {
+                const nextPriority = event.target.value as ProjectPriority;
+
+                onProjectChange(
+                  { priority: nextPriority },
+                  `Updated project priority to ${nextPriority}.`
+                );
+              }}
+            >
+              {(Object.keys(priorityLabel) as ProjectPriority[]).map((priority) => (
+                <option key={priority} value={priority}>
+                  {priorityLabel[priority]}
+                </option>
+              ))}
+            </select>
+          </PersonalInfoRow>
+
+          <PersonalInfoRow icon={<Lock />} label="Visibility">
+            <select
+              className="rp-select"
+              value={project.confidential ? "confidential" : "public"}
+              onChange={(event) => {
+                const nextConfidential = event.target.value === "confidential";
+
+                onProjectChange(
+                  { confidential: nextConfidential },
+                  nextConfidential
+                    ? "Marked project as confidential."
+                    : "Marked project as public."
+                );
+              }}
+            >
+              <option value="confidential">Confidential</option>
+              <option value="public">Public</option>
+            </select>
+          </PersonalInfoRow>
+
+          <PersonalInfoRow icon={<UserRound />} label="Delivery owner">
+            <select
+              className="rp-select"
+              value={info.owner ?? ""}
+              onChange={(event) => {
+                setInfo({ ...info, owner: event.target.value });
+
+                if (event.target.value) {
+                  onLogActivity(`Assigned delivery owner to ${event.target.value}.`);
+                }
+              }}
+            >
+              <option value="">Not assigned</option>
+              {OWNER_OPTIONS.map((owner) => (
+                <option key={owner} value={owner}>
+                  {owner}
+                </option>
+              ))}
+            </select>
+          </PersonalInfoRow>
+
+          <PersonalInfoRow icon={<BriefcaseBusiness />} label="Client">
+            {project.clientName}
+          </PersonalInfoRow>
         </div>
+      </section>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {project.positions.map((position) => {
-            const positionConfig = positionStatusConfig[position.status];
-
-            return (
+      <section>
+        <SectionLabel
+          action={
+            <div className="flex gap-2">
               <button
-                key={position.id}
-                onClick={() => onPositionClick(position)}
-                className="overflow-hidden rounded-2xl border text-left shadow-sm transition app-border app-card hover:border-violet-500/40 hover:shadow-md"
+                type="button"
+                onClick={() => setIsAddingLink((current) => !current)}
+                className={SMALL_BUTTON_CLASS}
               >
-                <div className={`h-1.5 ${positionConfig.barClass}`} />
-
-                <div className="p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold app-text-primary">
-                        {position.title}
-                      </p>
-
-                      <p className="mt-1 text-xs app-text-secondary">
-                        Seniority: {position.seniority}
-                      </p>
-                    </div>
-
-                    <span
-                      className={`rp-board-badge shrink-0 rounded-full border px-2 py-1 text-[11px] font-semibold ${positionConfig.badgeClass}`}
-                    >
-                      {positionConfig.label}
-                    </span>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between text-xs app-text-secondary">
-                    <span className="inline-flex items-center gap-1.5">
-                      <UserRound className="h-3.5 w-3.5" />
-                      {position.owner}
-                    </span>
-
-                    <span className="inline-flex items-center gap-1.5">
-                      <Users className="h-3.5 w-3.5" />
-                      {position.candidates.length}
-                    </span>
-                  </div>
-                </div>
+                <LinkIcon className="h-3.5 w-3.5" />
+                Add link
               </button>
-            );
-          })}
+
+              <FileAttachButton
+                label="Attach file"
+                onFiles={(picked) => {
+                  setInfo({ ...info, files: [...files, ...picked] });
+                  onLogActivity(
+                    `Attached ${plural(picked.length, "file", "files")} to the project.`
+                  );
+                }}
+              />
+            </div>
+          }
+        >
+          Client &amp; project info
+        </SectionLabel>
+
+        <div className="overflow-hidden rounded-xl border app-border app-card">
+          {isAddingLink && (
+            <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3 app-border">
+              <input
+                value={linkTitle}
+                onChange={(event) => setLinkTitle(event.target.value)}
+                placeholder="Title (optional)"
+                className="rp-select min-w-[140px] flex-1"
+              />
+
+              <input
+                value={linkUrl}
+                onChange={(event) => setLinkUrl(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    addLink();
+                  }
+                }}
+                placeholder="https://..."
+                className="rp-select min-w-[200px] flex-[2]"
+              />
+
+              <button
+                type="button"
+                onClick={addLink}
+                disabled={!linkUrl.trim()}
+                className="rounded-xl px-3 py-1.5 text-xs font-semibold app-button-primary disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Add
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsAddingLink(false)}
+                className="rp-link-btn text-xs"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {links.length === 0 && files.length === 0 && !isAddingLink && (
+            <p className="px-4 py-6 text-center text-sm app-text-muted">
+              No links or files yet. Add the brief, NDA or any useful reference for the
+              recruiting team.
+            </p>
+          )}
+
+          {links.map((link) => (
+            <ResourceRow
+              key={link.id}
+              icon={<LinkIcon className="h-4 w-4" />}
+              title={link.title}
+              subtitle={link.url}
+              href={normalizeUrl(link.url)}
+              onRemove={() => setInfo({ ...info, links: links.filter((item) => item.id !== link.id) })}
+            />
+          ))}
+
+          {files.map((file) => (
+            <ResourceRow
+              key={file.id}
+              icon={<FileText className="h-4 w-4" />}
+              title={file.name}
+              subtitle={formatFileSize(file.size)}
+              onRemove={() => setInfo({ ...info, files: files.filter((item) => item.id !== file.id) })}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <SectionLabel
+          icon={<BriefcaseBusiness className="h-3.5 w-3.5 app-text-muted" />}
+          action={
+            <button
+              type="button"
+              onClick={onAddPosition}
+              className={SMALL_BUTTON_CLASS}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add position
+            </button>
+          }
+        >
+          Positions ({project.positions.length})
+        </SectionLabel>
+
+        <div className="overflow-hidden rounded-xl border app-border app-card">
+          {project.positions.length > 0 ? (
+            project.positions.map((position) => {
+              const positionConfig = positionStatusConfig[position.status];
+              const stats = getPositionStats(position);
+
+              return (
+                <button
+                  key={position.id}
+                  type="button"
+                  onClick={() => onPositionClick(position)}
+                  className="rp-row-hover flex w-full items-center gap-4 border-t px-4 py-3 text-left first:border-t-0 app-border"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold app-text-primary">
+                      {position.title} · {position.seniority}
+                    </p>
+
+                    <p className="mt-0.5 text-xs app-text-muted">
+                      Owner {position.owner} ·{" "}
+                      {plural(stats.total, "candidate", "candidates")}
+                    </p>
+                  </div>
+
+                  <span
+                    className={`rp-board-badge shrink-0 rounded-full border px-2 py-1 text-[11px] font-semibold ${positionConfig.badgeClass}`}
+                  >
+                    {positionConfig.label}
+                  </span>
+
+                  <span className="w-20 shrink-0 text-right text-xs app-text-secondary">
+                    {stats.hired} / {stats.quantity} hired
+                  </span>
+
+                  <ChevronRight className="h-4 w-4 shrink-0 app-text-muted" />
+                </button>
+              );
+            })
+          ) : (
+            <p className="px-4 py-6 text-center text-sm app-text-muted">
+              No positions yet.
+            </p>
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-red-500/30 p-4 app-card">
+        <p className="text-xs font-semibold uppercase tracking-wide text-red-500">
+          Archive project
+        </p>
+
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-4">
+          <p className="max-w-xl text-sm leading-6 app-text-secondary">
+            {canArchive
+              ? "This project has no open searches. You can archive it: it leaves the board but keeps its full history."
+              : "Archive this project once it has no open searches (status: No open searches). It leaves the board but keeps its full history."}
+          </p>
+
+          <button
+            type="button"
+            onClick={onArchive}
+            disabled={!canArchive}
+            className="inline-flex items-center gap-2 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Archive className="h-4 w-4" />
+            Archive project
+          </button>
         </div>
       </section>
     </div>
@@ -1589,111 +2488,144 @@ type PositionDetailContentProps = {
   project: ProjectColumnType;
   position: PositionCardType;
   onCandidateClick: (candidate: CandidateMini) => void;
+  onPositionChange: (updates: PositionOverride, activityText: string) => void;
+  onLogActivity: (text: string) => void;
+  onAddCandidate: () => void;
 };
 
 function PositionDetailContent({
   project,
   position,
   onCandidateClick,
+  onPositionChange,
+  onLogActivity,
+  onAddCandidate,
 }: PositionDetailContentProps) {
-  const config = positionStatusConfig[position.status];
+  const stats = getPositionStats(position);
+  const jdKey = `rp-jd:project:${project.id}:position:${position.id}`;
+  const [jdFiles, setJdFiles] = useStoredState<ResourceFile[]>(`${jdKey}:files`, []);
+
+  const ownerOptions = OWNER_OPTIONS.includes(position.owner)
+    ? OWNER_OPTIONS
+    : [position.owner, ...OWNER_OPTIONS];
 
   return (
     <div className="space-y-5">
-      <section className="flex flex-wrap gap-2">
-        <button className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium app-border app-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.06]">
-          <Plus className="h-4 w-4" />
-          Add candidate
-        </button>
+      <section>
+        <SectionLabel
+          icon={<FileText className="h-3.5 w-3.5 app-text-muted" />}
+          action={
+            <FileAttachButton
+              label="Attach JD file"
+              onFiles={(picked) => {
+                setJdFiles([...jdFiles, ...picked]);
+                onLogActivity(`Attached ${plural(picked.length, "JD file", "JD files")}.`);
+              }}
+            />
+          }
+        >
+          Position brief / JD
+        </SectionLabel>
 
-        <button className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium app-border app-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.06]">
-          <CalendarDays className="h-4 w-4" />
-          Dates
-        </button>
+        <RichTextEditor
+          storageKey={jdKey}
+          placeholder="Write or paste the JD or the client request..."
+          ariaLabel="Position brief and JD"
+        />
 
-        <button className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium app-border app-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.06]">
-          <Users className="h-4 w-4" />
-          Members
-        </button>
-
-        <button className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium app-border app-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.06]">
-          <Paperclip className="h-4 w-4" />
-          Attachment
-        </button>
+        {jdFiles.length > 0 && (
+          <div className="mt-3 overflow-hidden rounded-xl border app-border app-card">
+            {jdFiles.map((file) => (
+              <ResourceRow
+                key={file.id}
+                icon={<FileText className="h-4 w-4" />}
+                title={file.name}
+                subtitle={formatFileSize(file.size)}
+                onRemove={() => setJdFiles(jdFiles.filter((item) => item.id !== file.id))}
+              />
+            ))}
+          </div>
+        )}
       </section>
 
       <section>
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide app-text-muted">
-          Labels
-        </p>
+        <SectionLabel>Position details</SectionLabel>
 
-        <div className="flex flex-wrap gap-2">
-          <span
-            className={`rp-board-badge rounded-md border px-3 py-1.5 text-xs font-semibold ${config.badgeClass}`}
-          >
-            {config.label}
-          </span>
+        <div className="overflow-hidden rounded-xl border app-border app-card">
+          <PersonalInfoRow icon={<BriefcaseBusiness />} label="Status">
+            <select
+              className="rp-select"
+              value={position.status}
+              onChange={(event) => {
+                const nextStatus = event.target.value as PositionCardType["status"];
 
-          <span className="rp-priority-badge rounded-md px-3 py-1.5 text-xs font-semibold">
-            {project.priority.toUpperCase()} PRIORITY
-          </span>
+                onPositionChange(
+                  { status: nextStatus },
+                  `Changed position status to ${positionStatusConfig[nextStatus].label}.`
+                );
+              }}
+            >
+              {(Object.keys(positionStatusConfig) as PositionCardType["status"][]).map(
+                (status) => (
+                  <option key={status} value={status}>
+                    {positionStatusConfig[status].label}
+                  </option>
+                )
+              )}
+            </select>
+          </PersonalInfoRow>
 
-          {project.confidential && (
-            <span className="rounded-md border border-red-500/40 bg-red-600 px-3 py-1.5 text-xs font-semibold text-white">
-              CONFIDENTIAL
-            </span>
-          )}
+          <PersonalInfoRow icon={<UserRound />} label="Owner">
+            <select
+              className="rp-select"
+              value={position.owner}
+              onChange={(event) =>
+                onPositionChange(
+                  { owner: event.target.value },
+                  `Assigned internal owner to ${event.target.value}.`
+                )
+              }
+            >
+              {ownerOptions.map((owner) => (
+                <option key={owner} value={owner}>
+                  {owner}
+                </option>
+              ))}
+            </select>
+          </PersonalInfoRow>
+
+          <PersonalInfoRow icon={<Flag />} label="Seniority">
+            {position.seniority}
+          </PersonalInfoRow>
+
+          <PersonalInfoRow icon={<Users />} label="Openings">
+            {stats.hired} of {stats.quantity} filled
+          </PersonalInfoRow>
+
+          <PersonalInfoRow icon={<BriefcaseBusiness />} label="Client / Project">
+            {project.clientName} · {project.projectName}
+          </PersonalInfoRow>
         </div>
       </section>
 
-      <section className="rounded-2xl border p-4 app-border app-card">
-        <div className="flex items-center gap-2">
-          <BriefcaseBusiness className="h-4 w-4 app-text-secondary" />
-          <h3 className="text-sm font-semibold app-text-primary">
-            Position brief / JD
-          </h3>
-        </div>
+      <section>
+        <SectionLabel
+          icon={<Users className="h-3.5 w-3.5 app-text-muted" />}
+          action={
+            <button
+              type="button"
+              onClick={onAddCandidate}
+              className={SMALL_BUTTON_CLASS}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add candidate
+            </button>
+          }
+        >
+          Candidates assigned ({position.candidates.length})
+        </SectionLabel>
 
-        <div className="mt-4 space-y-3 text-sm leading-6 app-text-secondary">
-          <p>
-            Esta sección va a contener la JD completa o las instrucciones del
-            pedido solicitado por el cliente. En esta capa queda como mock visual
-            para validar experiencia.
-          </p>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <InfoBox label="Client / Project">
-              {project.clientName} · {project.projectName}
-            </InfoBox>
-
-            <InfoBox label="Base role">
-              {position.title} · {position.seniority}
-            </InfoBox>
-
-            <InfoBox label="Owner">{position.owner}</InfoBox>
-
-            <InfoBox label="Candidates linked">
-              {position.candidates.length}
-            </InfoBox>
-          </div>
-        </div>
-      </section>
-
-      <section className="rounded-2xl border p-4 app-border app-card">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Users className="h-4 w-4 app-text-secondary" />
-            <h3 className="text-sm font-semibold app-text-primary">
-              Candidates assigned
-            </h3>
-          </div>
-
-          <span className="rounded-full border px-2 py-1 text-xs app-border app-text-secondary">
-            {position.candidates.length}
-          </span>
-        </div>
-
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <div className="grid gap-3 md:grid-cols-2">
           {position.candidates.length > 0 ? (
             position.candidates.map((candidate) => (
               <CandidateMiniCard
@@ -1714,6 +2646,7 @@ function PositionDetailContent({
 }
 
 type CandidatePagerProps = {
+  entityLabel?: string;
   currentIndex: number;
   total: number;
   hasPrevious: boolean;
@@ -1723,6 +2656,7 @@ type CandidatePagerProps = {
 };
 
 function CandidatePager({
+  entityLabel = "candidate",
   currentIndex,
   total,
   hasPrevious,
@@ -1735,7 +2669,7 @@ function CandidatePager({
       <button
         onClick={onPrevious}
         disabled={!hasPrevious}
-        aria-label="Previous candidate"
+        aria-label={`Previous ${entityLabel}`}
         className="rounded-l-xl p-2 transition app-text-secondary hover:bg-black/[0.04] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.06]"
       >
         <ChevronLeft className="h-4 w-4" />
@@ -1748,7 +2682,7 @@ function CandidatePager({
       <button
         onClick={onNext}
         disabled={!hasNext}
-        aria-label="Next candidate"
+        aria-label={`Next ${entityLabel}`}
         className="rounded-r-xl p-2 transition app-text-secondary hover:bg-black/[0.04] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.06]"
       >
         <ChevronRight className="h-4 w-4" />
@@ -1910,6 +2844,12 @@ function RpDetailStyles() {
       .rp-notes-editor:empty::before { content: attr(data-placeholder); color: var(--app-text-muted); }
       .rp-notes-editor ul { list-style: disc; padding-left: 20px; }
       .rp-notes-editor ol { list-style: decimal; padding-left: 20px; }
+      .rp-select {
+        background: var(--app-surface); color: var(--app-text-primary);
+        border: 1px solid var(--app-border); border-radius: 8px;
+        padding: 6px 10px; font-size: 13px; font-weight: 600;
+      }
+      .rp-row-hover:hover { background: var(--app-surface-muted); }
     `}</style>
   );
 }
@@ -2063,98 +3003,6 @@ function escapeHtml(value: string) {
     .replace(/>/g, "&gt;");
 }
 
-type RecruiterNotesEditorProps = {
-  candidateId: string;
-  initialNotes?: string;
-};
-
-function RecruiterNotesEditor({
-  candidateId,
-  initialNotes,
-}: RecruiterNotesEditorProps) {
-  const storageKey = `rp-notes:candidate:${candidateId}`;
-  const editorRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const editor = editorRef.current;
-
-    if (!editor) {
-      return;
-    }
-
-    let storedNotes: string | null = null;
-
-    try {
-      storedNotes = window.localStorage.getItem(storageKey);
-    } catch {
-      storedNotes = null;
-    }
-
-    editor.innerHTML =
-      storedNotes ?? escapeHtml(initialNotes || "").replace(/\n/g, "<br>");
-  }, [storageKey, initialNotes]);
-
-  const persistNotes = () => {
-    const editor = editorRef.current;
-
-    if (!editor) {
-      return;
-    }
-
-    try {
-      window.localStorage.setItem(storageKey, editor.innerHTML);
-    } catch {
-      // Local storage can fail in private browsing or quota situations.
-    }
-  };
-
-  const runCommand = (command: string) => {
-    editorRef.current?.focus();
-    document.execCommand(command);
-    persistNotes();
-  };
-
-  const toolbarButtons = [
-    { command: "bold", label: "Bold", icon: <Bold className="h-3.5 w-3.5" /> },
-    { command: "italic", label: "Italic", icon: <Italic className="h-3.5 w-3.5" /> },
-    { command: "underline", label: "Underline", icon: <Underline className="h-3.5 w-3.5" /> },
-    { command: "insertUnorderedList", label: "Bulleted list", icon: <List className="h-3.5 w-3.5" /> },
-    { command: "insertOrderedList", label: "Numbered list", icon: <ListOrdered className="h-3.5 w-3.5" /> },
-  ];
-
-  return (
-    <div className="overflow-hidden rounded-xl border app-border app-card">
-      <div className="flex gap-1 border-b px-3 py-2 app-border">
-        {toolbarButtons.map((button) => (
-          <button
-            key={button.command}
-            type="button"
-            title={button.label}
-            aria-label={button.label}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => runCommand(button.command)}
-            className="rounded-lg p-1.5 transition app-text-secondary hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
-          >
-            {button.icon}
-          </button>
-        ))}
-      </div>
-
-      <div
-        ref={editorRef}
-        contentEditable
-        role="textbox"
-        aria-multiline="true"
-        aria-label="Recruiter notes"
-        data-placeholder="Write a note..."
-        spellCheck={false}
-        onInput={persistNotes}
-        className="rp-notes-editor min-h-[130px] px-4 py-3 text-sm leading-6 outline-none app-text-primary"
-      />
-    </div>
-  );
-}
-
 type CandidateDetailContentProps = {
   candidate: CandidateMini;
 };
@@ -2242,10 +3090,12 @@ function CandidateDetailContent({ candidate }: CandidateDetailContentProps) {
           </p>
         </div>
 
-        <RecruiterNotesEditor
+        <RichTextEditor
           key={candidate.id}
-          candidateId={candidate.id}
-          initialNotes={candidate.notes}
+          storageKey={`rp-notes:candidate:${candidate.id}`}
+          initialText={candidate.notes}
+          placeholder="Write a note..."
+          ariaLabel="Recruiter notes"
         />
       </section>
 

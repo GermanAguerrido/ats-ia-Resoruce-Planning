@@ -1,22 +1,35 @@
-import { Lock, Unlock, Plus } from "lucide-react";
+"use client";
+
+import { useState } from "react";
+import { Archive, GripVertical, Lock, Plus, Unlock } from "lucide-react";
 import type {
   CandidateMini,
   PositionCard as PositionCardType,
   ProjectColumn as ProjectColumnType,
 } from "@/app/data/resourcePlanningMock";
 import type { PositionStatusFilter } from "@/app/jobs/page";
+import type { BoardDragState, ProjectDropSide } from "./boardDnd";
 import { ProjectMainCard } from "./ProjectMainCard";
 import { PositionCard } from "./PositionCard";
 
 type Props = {
   project: ProjectColumnType;
   positionStatusFilter?: PositionStatusFilter;
+  dragState?: BoardDragState | null;
   onProjectClick: () => void;
   onPositionClick: (position: PositionCardType) => void;
   onCandidateClick: (
     candidate: CandidateMini,
     position: PositionCardType
   ) => void;
+  onProjectDragStart?: () => void;
+  onPositionDragStart?: (position: PositionCardType) => void;
+  onDragEnd?: () => void;
+  onDropProject?: (side: ProjectDropSide) => void;
+  onDropPosition?: (beforePositionId: string | null) => void;
+  onArchive?: () => void;
+  onAddPosition?: () => void;
+  onAddCandidate?: (position: PositionCardType) => void;
 };
 
 const statusConfig: Record<
@@ -69,12 +82,33 @@ const priorityConfig: Record<
 export function ProjectColumn({
   project,
   positionStatusFilter = "all",
+  dragState = null,
   onProjectClick,
   onPositionClick,
   onCandidateClick,
+  onProjectDragStart,
+  onPositionDragStart,
+  onDragEnd,
+  onDropProject,
+  onDropPosition,
+  onArchive,
+  onAddPosition,
+  onAddCandidate,
 }: Props) {
   const status = statusConfig[project.status];
   const priority = priorityConfig[project.priority];
+
+  const [projectDropSide, setProjectDropSide] =
+    useState<ProjectDropSide | null>(null);
+  const [isPositionTarget, setIsPositionTarget] = useState(false);
+
+  const isDraggingProject =
+    dragState?.kind === "project" && dragState.projectId === project.id;
+
+  const resetDropMarks = () => {
+    setProjectDropSide(null);
+    setIsPositionTarget(false);
+  };
 
   // Filtrar posiciones según el filtro de estado
   const visiblePositions =
@@ -84,41 +118,142 @@ export function ProjectColumn({
           (position) => position.status === positionStatusFilter
         );
 
+  const dropShadowClass =
+    projectDropSide === "before"
+      ? "shadow-[-7px_0_0_0_#8b5cf6]"
+      : projectDropSide === "after"
+        ? "shadow-[7px_0_0_0_#8b5cf6]"
+        : "";
+
   return (
-    <section className="flex h-full w-[340px] shrink-0 flex-col overflow-hidden rounded-2xl border app-border app-card">
-      {/* Header STICKY */}
+    <section
+      onDragOver={(event) => {
+        if (!dragState) {
+          return;
+        }
+
+        if (dragState.kind === "project") {
+          if (dragState.projectId === project.id) {
+            return;
+          }
+
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+
+          const bounds = event.currentTarget.getBoundingClientRect();
+
+          setProjectDropSide(
+            event.clientX < bounds.left + bounds.width / 2 ? "before" : "after"
+          );
+          return;
+        }
+
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setIsPositionTarget(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          resetDropMarks();
+        }
+      }}
+      onDrop={(event) => {
+        if (!dragState) {
+          return;
+        }
+
+        event.preventDefault();
+
+        if (dragState.kind === "project") {
+          if (dragState.projectId !== project.id) {
+            onDropProject?.(projectDropSide ?? "after");
+          }
+        } else {
+          onDropPosition?.(null);
+        }
+
+        resetDropMarks();
+      }}
+      className={`flex h-full w-[340px] shrink-0 flex-col overflow-hidden rounded-2xl border transition-shadow app-border app-card ${dropShadowClass} ${
+        isPositionTarget
+          ? "outline-2 outline-dashed outline-violet-500/70 -outline-offset-4"
+          : ""
+      } ${isDraggingProject ? "opacity-50" : ""}`}
+    >
+      {/* Header STICKY + handle para arrastrar la columna */}
       <header
-        className="sticky top-0 z-10 border-b p-4 app-border backdrop-blur-xl"
+        draggable
+        onDragStart={(event) => {
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", project.id);
+
+          const section = event.currentTarget.closest("section");
+
+          if (section) {
+            event.dataTransfer.setDragImage(section, 24, 24);
+          }
+
+          onProjectDragStart?.();
+        }}
+        onDragEnd={() => {
+          resetDropMarks();
+          onDragEnd?.();
+        }}
+        className="sticky top-0 z-10 cursor-grab border-b p-4 app-border backdrop-blur-xl active:cursor-grabbing"
         style={{ backgroundColor: "var(--app-surface)" }}
       >
-        <h2 className="text-base font-bold app-text-primary">
-          {project.projectName} - {project.clientName}
-        </h2>
+        <div className="flex items-start gap-2">
+          <GripVertical
+            className="mt-0.5 h-4 w-4 shrink-0 app-text-muted"
+            aria-hidden="true"
+          />
 
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {project.confidential ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-red-500/70 bg-red-500/50 px-2 py-1 text-[11px] font-semibold text-black dark:text-white">
-              <Lock className="h-3 w-3" />
-              Confidential
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/70 bg-emerald-500/50 px-2 py-1 text-[11px] font-semibold text-black dark:text-white">
-              <Unlock className="h-3 w-3" />
-              Public
-            </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-bold app-text-primary">
+              {project.projectName} - {project.clientName}
+            </h2>
+
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {project.confidential ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-red-500/70 bg-red-500/50 px-2 py-1 text-[11px] font-semibold text-black dark:text-white">
+                  <Lock className="h-3 w-3" />
+                  Confidential
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/70 bg-emerald-500/50 px-2 py-1 text-[11px] font-semibold text-black dark:text-white">
+                  <Unlock className="h-3 w-3" />
+                  Public
+                </span>
+              )}
+
+              <span
+                className={`inline-block rounded-full px-2 py-1 text-[11px] font-semibold ${status.className}`}
+              >
+                {status.label}
+              </span>
+
+              <span
+                className={`inline-block rounded-full px-2 py-1 text-[11px] font-semibold ${priority.className}`}
+              >
+                {priority.label}
+              </span>
+            </div>
+          </div>
+
+          {onArchive && project.status === "active_no_search" && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onArchive();
+              }}
+              title="Archive project"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-red-500/45 bg-red-500/10 px-2 py-1 text-[11px] font-bold text-red-500 transition hover:bg-red-500/20"
+            >
+              <Archive className="h-3.5 w-3.5" />
+              Archive
+            </button>
           )}
-
-          <span
-            className={`inline-block rounded-full px-2 py-1 text-[11px] font-semibold ${status.className}`}
-          >
-            {status.label}
-          </span>
-
-          <span
-            className={`inline-block rounded-full px-2 py-1 text-[11px] font-semibold ${priority.className}`}
-          >
-            {priority.label}
-          </span>
         </div>
       </header>
 
@@ -143,9 +278,26 @@ export function ProjectColumn({
               <PositionCard
                 key={position.id}
                 position={position}
+                isDragging={
+                  dragState?.kind === "position" &&
+                  dragState.positionId === position.id
+                }
+                canDropHere={
+                  dragState?.kind === "position" &&
+                  dragState.positionId !== position.id
+                }
                 onClick={() => onPositionClick(position)}
                 onCandidateClick={(candidate) =>
                   onCandidateClick(candidate, position)
+                }
+                onDragStart={() => onPositionDragStart?.(position)}
+                onDragEnd={onDragEnd}
+                onDropBefore={() => {
+                  onDropPosition?.(position.id);
+                  resetDropMarks();
+                }}
+                onAddCandidate={
+                  onAddCandidate ? () => onAddCandidate(position) : undefined
                 }
               />
             ))}
@@ -161,7 +313,11 @@ export function ProjectColumn({
           </div>
         </div>
 
-        <button className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed px-3 py-3 text-sm transition app-border app-text-secondary hover:border-violet-500/40 hover:bg-violet-500/10 hover:text-violet-700 dark:hover:text-violet-200">
+        <button
+          type="button"
+          onClick={onAddPosition}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed px-3 py-3 text-sm transition app-border app-text-secondary hover:border-violet-500/40 hover:bg-violet-500/10 hover:text-violet-700 dark:hover:text-violet-200"
+        >
           <Plus className="h-4 w-4" />
           Add position
         </button>
