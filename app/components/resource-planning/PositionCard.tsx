@@ -1,15 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, Plus } from "lucide-react";
+import { ChevronDown, Clock3, Plus } from "lucide-react";
 import type {
   CandidateMini,
   PositionCard as PositionCardType,
 } from "@/app/data/resourcePlanningMock";
+import { AGING_THRESHOLD_DAYS, getPositionAverageDays } from "@/app/lib/boardMetrics";
+import { isHiredCandidate } from "@/app/lib/candidateStatus";
+import type { BoardDensity } from "./BoardFilters";
 import { CandidateMiniCard } from "./CandidateMiniCard";
 
 type Props = {
   position: PositionCardType;
+  density?: BoardDensity;
+  readOnly?: boolean;
   isDragging?: boolean;
   canDropHere?: boolean;
   onClick: () => void;
@@ -53,6 +58,8 @@ const statusConfig = {
 
 export function PositionCard({
   position,
+  density = "comfortable",
+  readOnly = false,
   isDragging = false,
   canDropHere = false,
   onClick,
@@ -67,9 +74,18 @@ export function PositionCard({
   const [isDropTarget, setIsDropTarget] = useState(false);
 
   const totalToFill = position.quantity ?? 1;
-  const hiredCount = position.candidates.filter(
-    (c) => c.processStatus === "hired" || c.talentType === "trick_internal"
-  ).length;
+  const hiredCandidates = position.candidates.filter(isHiredCandidate);
+  const activeCandidates = position.candidates.filter(
+    (candidate) => !isHiredCandidate(candidate)
+  );
+  const hiredCount = hiredCandidates.length;
+  const [showHired, setShowHired] = useState(false);
+
+  // Tiempo promedio de la posición. En modo compacto solo se muestra si hay alerta.
+  const averageDays = getPositionAverageDays(position);
+  const isAging = averageDays !== null && averageDays >= AGING_THRESHOLD_DAYS;
+  const showAverage =
+    averageDays !== null && (density === "comfortable" || isAging);
 
   const handleToggle = () => {
     setIsExpanded((current) => !current);
@@ -118,11 +134,11 @@ export function PositionCard({
       }}
     >
       {isDropTarget && (
-        <div className="pointer-events-none absolute -top-2 left-0 right-0 z-10 h-1 rounded bg-violet-500" />
+        <div className="pointer-events-none absolute -top-1.5 left-0 right-0 z-10 h-1 rounded bg-violet-500" />
       )}
 
       <article
-        draggable
+        draggable={!readOnly}
         onDragStart={(event) => {
           event.dataTransfer.effectAllowed = "move";
           event.dataTransfer.setData("text/plain", position.id);
@@ -132,24 +148,47 @@ export function PositionCard({
           setIsDropTarget(false);
           onDragEnd?.();
         }}
-        className={`cursor-grab overflow-hidden rounded-2xl border shadow-sm transition hover:shadow-md active:cursor-grabbing ${config.bgClass} ${config.borderClass} ${
-          isDragging ? "opacity-40" : ""
-        }`}
+        className={`overflow-hidden rounded-xl border shadow-sm transition hover:shadow-md ${
+          readOnly ? "" : "cursor-grab active:cursor-grabbing"
+        } ${config.bgClass} ${config.borderClass} ${isDragging ? "opacity-40" : ""}`}
       >
-        {/* Header clickable: toggle expand + open detail modal */}
-        <div className="flex items-center justify-between gap-2 p-4">
-          <div onClick={onClick} className="min-w-0 flex-1 cursor-pointer">
-            <h3 className="truncate text-sm font-semibold app-text-primary">
+        {/* Header: título + relación a la izquierda; tiempo, estado y flecha a la derecha */}
+        <div
+          className={`flex items-center gap-2 ${
+            density === "compact" ? "px-2.5 py-1.5" : "px-3 py-2.5"
+          }`}
+        >
+          <div
+            onClick={onClick}
+            className="flex min-w-0 flex-1 cursor-pointer items-baseline gap-1.5"
+          >
+            <h3
+              title={`${position.title} · ${position.seniority}`}
+              className="min-w-0 truncate text-[12.5px] font-semibold app-text-primary"
+            >
               {position.title} · {position.seniority}
             </h3>
-          </div>
 
-          <div className="flex shrink-0 items-center gap-2">
-            <span className="text-sm font-bold app-text-primary">
+            <span className="shrink-0 text-xs font-bold app-text-primary">
               {hiredCount}/{totalToFill}
             </span>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-1.5">
+            {showAverage && (
+              <span
+                title="Average time in process of its candidates"
+                className={`inline-flex items-center gap-1 text-[11px] ${
+                  isAging ? "bd-amber font-bold" : "app-text-secondary"
+                }`}
+              >
+                <Clock3 className="h-3 w-3" />
+                {averageDays}d
+              </span>
+            )}
+
             <span
-              className={`rounded-full px-2 py-1 text-[11px] font-semibold ${config.badgeClass}`}
+              className={`rounded-full px-2 py-0.5 text-[10.5px] font-semibold ${config.badgeClass}`}
             >
               {config.label}
             </span>
@@ -157,7 +196,7 @@ export function PositionCard({
             {/* Flecha toggle para expandir/colapsar */}
             <button
               onClick={handleToggle}
-              className="rounded-lg p-1 transition hover:bg-black/[0.06] dark:hover:bg-white/[0.08]"
+              className="rounded-md p-0.5 transition hover:bg-black/[0.06] dark:hover:bg-white/[0.08]"
               aria-label={isExpanded ? "Collapse candidates" : "Expand candidates"}
             >
               <ChevronDown
@@ -171,9 +210,9 @@ export function PositionCard({
 
         {/* Candidatos: solo visibles cuando está expandido */}
         {isExpanded && (
-          <div className="space-y-2 px-4 pb-4">
-            {position.candidates.length > 0 ? (
-              position.candidates.map((candidate) => (
+          <div className="space-y-2 px-3 pb-3">
+            {activeCandidates.length > 0 ? (
+              activeCandidates.map((candidate) => (
                 <CandidateMiniCard
                   key={candidate.id}
                   candidate={candidate}
@@ -185,11 +224,43 @@ export function PositionCard({
                 className="rounded-xl border border-dashed px-3 py-3 text-xs app-text-muted"
                 style={{ borderColor: "var(--app-border)" }}
               >
-                No candidates linked yet
+                {hiredCandidates.length > 0
+                  ? "No active candidates"
+                  : "No candidates linked yet"}
               </div>
             )}
 
-            {onAddCandidate && (
+            {/* Los contratados salen de la lista y quedan en esta sección plegada */}
+            {hiredCandidates.length > 0 && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowHired((current) => !current)}
+                  className="flex w-full items-center gap-1.5 rounded-xl border border-dashed px-3 py-2 text-xs font-medium transition app-border app-text-secondary hover:border-emerald-500/50"
+                >
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 transition-transform ${
+                      showHired ? "rotate-180" : "-rotate-90"
+                    }`}
+                  />
+                  Hired ({hiredCandidates.length})
+                </button>
+
+                {showHired && (
+                  <div className="mt-2 space-y-2">
+                    {hiredCandidates.map((candidate) => (
+                      <CandidateMiniCard
+                        key={candidate.id}
+                        candidate={candidate}
+                        onClick={() => onCandidateClick(candidate)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {onAddCandidate && !readOnly && (
               <button
                 type="button"
                 onClick={onAddCandidate}

@@ -9,9 +9,17 @@ import type {
 import {
   resourcePlanningMock,
   type CandidateMini,
+  type CandidateProcessStatus,
   type PositionCard,
   type ProjectColumn,
 } from "@/app/data/resourcePlanningMock";
+import { appendActivityLog } from "@/app/lib/activityLog";
+import { buildStageChange, type StageMoveInput } from "@/app/lib/stageGates";
+import { addTechInterview } from "@/app/lib/techInterviews";
+import {
+  PROCESS_STATUS_INFO,
+} from "@/app/lib/candidateStatus";
+import { richHtmlToPlainText } from "@/app/lib/richText";
 import {
   clearStoredBoard,
   readStoredBoard,
@@ -127,7 +135,8 @@ export function useBoardState() {
     return [...activeProjects].sort(
       (a, b) =>
         projectStatusRank[a.status] - projectStatusRank[b.status] ||
-        priorityRank[a.priority] - priorityRank[b.priority]
+        priorityRank[a.priority] - priorityRank[b.priority] ||
+        Number(b.confidential) - Number(a.confidential)
     );
   }, [projectColumns, archivedIds, orderMode, manualOrder]);
 
@@ -155,20 +164,101 @@ export function useBoardState() {
     );
   };
 
+  // Con positionId, el cambio afecta solo a esa posición (el estado es independiente por posición)
   const updateCandidate = (
     candidateId: string,
-    updates: Partial<CandidateMini>
+    updates: Partial<CandidateMini>,
+    positionId?: string
   ) => {
     setProjectColumns((current) =>
       current.map((project) => ({
         ...project,
-        positions: project.positions.map((position) => ({
-          ...position,
-          candidates: position.candidates.map((candidate) =>
-            candidate.id === candidateId ? { ...candidate, ...updates } : candidate
-          ),
-        })),
+        positions: project.positions.map((position) =>
+          positionId && position.id !== positionId
+            ? position
+            : {
+                ...position,
+                candidates: position.candidates.map((candidate) =>
+                  candidate.id === candidateId
+                    ? { ...candidate, ...updates }
+                    : candidate
+                ),
+              }
+        ),
       }))
+    );
+  };
+
+  // Mueve un candidato a otra etapa de su posición con lo que pide el diálogo de requisitos:
+  // guarda la fecha de la etapa, lo anota en la línea de tiempo y deja un comentario
+  // automático con el motivo y quién lo hizo. Devuelve el estado anterior (para deshacer).
+  const changeCandidateStage = (
+    projectId: string,
+    positionId: string,
+    candidateId: string,
+    next: CandidateProcessStatus,
+    options?: { input?: StageMoveInput; author?: string }
+  ): CandidateMini | null => {
+    const project = projectColumns.find((item) => item.id === projectId);
+    const position = project?.positions.find((item) => item.id === positionId);
+    const candidate = position?.candidates.find((item) => item.id === candidateId);
+
+    if (!project || !position || !candidate || candidate.processStatus === next) {
+      return null;
+    }
+
+    const author = options?.author ?? "Germán";
+
+    const change = buildStageChange({
+      candidate,
+      project,
+      to: next,
+      input: options?.input ?? {},
+      author,
+    });
+
+    if (change.techInterviewToSave) {
+      addTechInterview(candidate.id, change.techInterviewToSave);
+    }
+
+    updateCandidate(candidateId, change.updates, positionId);
+
+    appendActivityLog(
+      `rp-activity:project:${projectId}:position:${positionId}:candidate:${candidateId}`,
+      change.commentText,
+      { author, type: "comment" }
+    );
+
+    return candidate;
+  };
+
+  // Vuelve un candidato exactamente al estado anterior (deshacer un movimiento)
+  const restoreCandidate = (
+    projectId: string,
+    positionId: string,
+    snapshot: CandidateMini,
+    author: string
+  ) => {
+    setProjectColumns((current) =>
+      current.map((project) => ({
+        ...project,
+        positions: project.positions.map((position) =>
+          position.id === positionId
+            ? {
+                ...position,
+                candidates: position.candidates.map((candidate) =>
+                  candidate.id === snapshot.id ? snapshot : candidate
+                ),
+              }
+            : position
+        ),
+      }))
+    );
+
+    appendActivityLog(
+      `rp-activity:project:${projectId}:position:${positionId}:candidate:${snapshot.id}`,
+      `Undid the last move: back to ${PROCESS_STATUS_INFO[snapshot.processStatus].label}.`,
+      { author, type: "action" }
     );
   };
 
@@ -183,12 +273,41 @@ export function useBoardState() {
       status: payload.status,
       priority: payload.priority,
       confidential: payload.confidential,
-      cover: buildCoverImage(`${payload.clientName} ${payload.projectName}`),
-      description: payload.description,
+      cover:
+        payload.coverImage ??
+        buildCoverImage(`${payload.clientName} ${payload.projectName}`),
+      description: richHtmlToPlainText(payload.description),
+      owner: optionalText(payload.owner),
+      members: [],
       positions: [],
     };
 
     setProjectColumns((current) => [...current, project]);
+
+    try {
+      // El brief con formato queda donde lo lee el editor de la vista de proyecto
+      if (payload.description.trim()) {
+        window.localStorage.setItem(`rp-brief:project:${id}`, payload.description);
+      }
+
+      // Links del proyecto (sitio, descargas y otros) para "Client & project info"
+      if (payload.links.length > 0) {
+        window.localStorage.setItem(
+          `rp-project-info:${id}`,
+          JSON.stringify({
+            owner: "",
+            links: payload.links.map((link) => ({
+              id: `link-${makeId()}`,
+              title: link.title,
+              url: link.url,
+            })),
+            files: [],
+          })
+        );
+      }
+    } catch {
+      // Local storage can fail in private browsing or quota situations.
+    }
 
     if (orderMode === "manual") {
       setManualOrder((current) => [...current, id]);
@@ -205,6 +324,8 @@ export function useBoardState() {
       status: payload.status,
       owner: payload.owner,
       quantity: payload.quantity,
+      openedAt: new Date().toISOString().slice(0, 10),
+      target: { type: "asap" },
       candidates: [],
     };
 
@@ -257,11 +378,13 @@ export function useBoardState() {
       salaryExpected: optionalText(payload.salaryExpected),
       workRelation: optionalText(payload.workRelation),
       englishLevel: optionalText(payload.englishLevel),
-      source: optionalText(payload.source),
       notes: optionalText(payload.notes),
       recruiterOwner: payload.recruiterOwner,
+      seniority: optionalText(payload.seniority),
+      stageHistory: [{ status: payload.processStatus, enteredAt: today }],
+      processStartedAt: today,
       lastContactAt: today,
-      daysInProcess: 0,
+      contactAttempts: 0,
       timeline: [
         {
           id: `timeline-${id}`,
@@ -282,6 +405,64 @@ export function useBoardState() {
               ...project,
               positions: project.positions.map((item) =>
                 item.id === positionId
+                  ? { ...item, candidates: [...item.candidates, candidate] }
+                  : item
+              ),
+            }
+          : project
+      )
+    );
+  };
+
+  // Suma un candidato que ya existe a otra posición: conserva sus datos personales,
+  // pero arranca un proceso nuevo (Sourced, 0 días y su propio historial).
+  const addExistingCandidate = (
+    projectId: string,
+    positionId: string,
+    source: CandidateMini
+  ) => {
+    const today = new Date().toISOString().slice(0, 10);
+
+    const position = projectColumns
+      .find((project) => project.id === projectId)
+      ?.positions.find((item) => item.id === positionId);
+
+    const candidate: CandidateMini = {
+      ...source,
+      processStatus: "contacted",
+      // Un empleado que ya fue contratado vuelve como talento interno, no como contratado
+      talentType:
+        source.talentType === "trick_internal" ? "internal_candidate" : source.talentType,
+      hiredAt: undefined,
+      techInterviewDoneAt: undefined,
+      ndaStatus: undefined,
+      stageHistory: [{ status: "contacted", enteredAt: today }],
+      seniorityValidated: false,
+      processStartedAt: today,
+      lastContactAt: today,
+      contactAttempts: 0,
+      daysInProcess: undefined,
+      timeline: [
+        {
+          id: `timeline-${makeId()}`,
+          title: "Added to position",
+          description: position
+            ? `Added to ${position.title} · ${position.seniority}.`
+            : "Added to a position.",
+          date: today,
+          author: source.recruiterOwner ?? "System",
+        },
+      ],
+    };
+
+    setProjectColumns((current) =>
+      current.map((project) =>
+        project.id === projectId
+          ? {
+              ...project,
+              positions: project.positions.map((item) =>
+                item.id === positionId &&
+                !item.candidates.some((existing) => existing.id === source.id)
                   ? { ...item, candidates: [...item.candidates, candidate] }
                   : item
               ),
@@ -379,6 +560,12 @@ export function useBoardState() {
     setOrderMode("auto");
   };
 
+  // Pasa a orden manual conservando el orden que se ve en pantalla
+  const setManualOrderMode = () => {
+    setManualOrder(orderedProjects.map((project) => project.id));
+    setOrderMode("manual");
+  };
+
   const resetBoard = () => {
     clearStoredBoard();
     setProjectColumns(resourcePlanningMock);
@@ -399,11 +586,15 @@ export function useBoardState() {
     createProject,
     createPosition,
     createCandidate,
+    changeCandidateStage,
+    restoreCandidate,
+    addExistingCandidate,
     archiveProject,
     restoreProject,
     moveProject,
     movePosition,
     setAutoOrder,
+    setManualOrderMode,
     resetBoard,
   };
 }

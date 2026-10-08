@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { ImageIcon, Plus, X } from "lucide-react";
 import type {
   CandidateProcessStatus,
   CandidateResumeStatus,
@@ -10,18 +10,36 @@ import type {
   ProjectColumn as ProjectColumnType,
   ProjectStatus,
 } from "@/app/data/resourcePlanningMock";
+import type { CandidateMini } from "@/app/data/resourcePlanningMock";
+import type { DirectoryCandidate } from "@/app/lib/candidateDirectory";
+import { fileToCoverDataUrl } from "@/app/lib/imageUtils";
+import { sanitizeRichHtml } from "@/app/lib/richText";
+import { SENIORITY_LEVELS } from "@/app/lib/candidateStatus";
+import { INTERNAL_USERS } from "@/app/lib/users";
+import { RichTextField } from "./RichTextField";
+import { UserAvatar } from "./UserAvatar";
 
 type ProjectPriority = ProjectColumnType["priority"];
 
 export type CreateEntityMode = "project" | "position" | "candidate";
 
+export type ProjectLinkPayload = {
+  title: string;
+  url: string;
+};
+
 export type NewProjectPayload = {
   clientName: string;
   projectName: string;
+  // HTML con formato básico (ya limpio)
   description: string;
   priority: ProjectPriority;
   status: ProjectStatus;
   confidential: boolean;
+  // "" = sin asignar
+  owner: string;
+  coverImage?: string;
+  links: ProjectLinkPayload[];
 };
 
 export type NewPositionPayload = {
@@ -44,7 +62,7 @@ export type NewCandidatePayload = {
   salaryCurrent: string;
   salaryExpected: string;
   workRelation: string;
-  source: string;
+  seniority: string;
   recruiterOwner: string;
   processStatus: CandidateProcessStatus;
   resumeStatus: CandidateResumeStatus;
@@ -57,6 +75,12 @@ type Props = {
   project?: ProjectColumnType | null;
   position?: PositionCardType | null;
   projects?: ProjectColumnType[];
+  existingCandidates?: DirectoryCandidate[];
+  onAddExistingCandidate?: (
+    projectId: string,
+    positionId: string,
+    candidate: CandidateMini
+  ) => void;
   onClose: () => void;
   onCreateProject: (payload: NewProjectPayload) => void;
   onCreatePosition: (projectId: string, payload: NewPositionPayload) => void;
@@ -67,7 +91,7 @@ type Props = {
   ) => void;
 };
 
-const OWNER_OPTIONS = ["Ana", "Germán", "Sofía"];
+const OWNER_OPTIONS = INTERNAL_USERS;
 const SENIORITY_OPTIONS = ["JR", "SSR", "SR", "Lead"];
 const ENGLISH_OPTIONS = [
   "",
@@ -78,7 +102,6 @@ const ENGLISH_OPTIONS = [
   "Advanced",
   "Native",
 ];
-const SOURCE_OPTIONS = ["LinkedIn", "Referral", "Trello import", "Other"];
 
 const PRIORITY_OPTIONS: Array<{ value: ProjectPriority; label: string }> = [
   { value: "high", label: "High" },
@@ -97,11 +120,10 @@ const PROCESS_STATUS_OPTIONS: Array<{
   value: CandidateProcessStatus;
   label: string;
 }> = [
-  { value: "sourced", label: "Sourced" },
   { value: "contacted", label: "Contacted" },
-  { value: "screening", label: "Screening" },
-  { value: "presented", label: "Presented" },
+  { value: "screening", label: "Interviewed" },
   { value: "tech_interview", label: "Tech Interview" },
+  { value: "presented", label: "Presented" },
 ];
 
 const RESUME_STATUS_OPTIONS: Array<{
@@ -111,15 +133,6 @@ const RESUME_STATUS_OPTIONS: Array<{
   { value: "none", label: "No resume" },
   { value: "wip_resume", label: "WIP resume" },
   { value: "resume_ready", label: "Resume ready" },
-];
-
-const TALENT_TYPE_OPTIONS: Array<{
-  value: CandidateTalentType;
-  label: string;
-}> = [
-  { value: "external", label: "External" },
-  { value: "internal_candidate", label: "Internal candidate" },
-  { value: "trick_internal", label: "Trick internal" },
 ];
 
 const inputClass =
@@ -184,6 +197,8 @@ function FormFooter({
   );
 }
 
+type OtherLinkDraft = { id: string; title: string; url: string };
+
 function ProjectForm({
   onSubmit,
   onCancel,
@@ -193,12 +208,41 @@ function ProjectForm({
 }) {
   const [clientName, setClientName] = useState("");
   const [projectName, setProjectName] = useState("");
-  const [description, setDescription] = useState("");
+  const [descriptionHtml, setDescriptionHtml] = useState("");
   const [priority, setPriority] = useState<ProjectPriority>("medium");
   const [status, setStatus] = useState<ProjectStatus>("active_search");
   const [confidential, setConfidential] = useState(false);
+  const [owner, setOwner] = useState("");
+  const [coverImage, setCoverImage] = useState<string | null>(null);
+  const [coverError, setCoverError] = useState("");
+  const [website, setWebsite] = useState("");
+  const [androidUrl, setAndroidUrl] = useState("");
+  const [iosUrl, setIosUrl] = useState("");
+  const [otherLinks, setOtherLinks] = useState<OtherLinkDraft[]>([
+    { id: "link-0", title: "", url: "" },
+  ]);
+  const coverInputRef = useRef<HTMLInputElement>(null);
 
   const canSubmit = Boolean(clientName.trim() && projectName.trim());
+
+  const handleCoverChange = async (file: File | undefined) => {
+    if (!file) {
+      return;
+    }
+
+    try {
+      setCoverImage(await fileToCoverDataUrl(file));
+      setCoverError("");
+    } catch (error) {
+      setCoverError(error instanceof Error ? error.message : "The image could not be read.");
+    }
+  };
+
+  const updateOtherLink = (id: string, field: "title" | "url", value: string) => {
+    setOtherLinks((current) =>
+      current.map((link) => (link.id === id ? { ...link, [field]: value } : link))
+    );
+  };
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -207,13 +251,26 @@ function ProjectForm({
       return;
     }
 
+    const links: ProjectLinkPayload[] = [
+      { title: "Website", url: website.trim() },
+      { title: "Android", url: androidUrl.trim() },
+      { title: "iOS", url: iosUrl.trim() },
+      ...otherLinks.map((link) => ({
+        title: link.title.trim() || link.url.trim(),
+        url: link.url.trim(),
+      })),
+    ].filter((link) => link.url);
+
     onSubmit({
       clientName: clientName.trim(),
       projectName: projectName.trim(),
-      description: description.trim(),
+      description: sanitizeRichHtml(descriptionHtml),
       priority,
       status,
       confidential,
+      owner,
+      coverImage: coverImage ?? undefined,
+      links,
     });
   };
 
@@ -244,15 +301,64 @@ function ProjectForm({
         </div>
 
         <div className="mt-3">
-          <Field label="Description">
-            <textarea
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder="Brief description of the project and the recruiting demand..."
-              className={`${inputClass} min-h-[76px] resize-y`}
-            />
-          </Field>
+          <span className="mb-1.5 block text-xs font-semibold app-text-secondary">
+            Description
+          </span>
+
+          <RichTextField
+            ariaLabel="Project description"
+            placeholder="Describe the project. You can paste lists with bullets."
+            onChange={setDescriptionHtml}
+          />
+
+          <p className="mt-1.5 text-xs app-text-muted">
+            Pasted lists keep their bullets. Colors and fonts from other sources are
+            removed.
+          </p>
         </div>
+
+        <FormSection>Cover photo</FormSection>
+
+        <input
+          ref={coverInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(event) => {
+            void handleCoverChange(event.target.files?.[0]);
+            event.target.value = "";
+          }}
+        />
+
+        {coverImage ? (
+          <div className="relative overflow-hidden rounded-xl border app-border">
+            <img src={coverImage} alt="Cover preview" className="h-[92px] w-full object-cover" />
+
+            <button
+              type="button"
+              onClick={() => setCoverImage(null)}
+              className="absolute right-2 top-2 rounded-lg border border-white/25 bg-black/55 px-2.5 py-1 text-xs font-semibold text-white"
+            >
+              Remove
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => coverInputRef.current?.click()}
+            className="flex h-[92px] w-full flex-col items-center justify-center gap-1 rounded-xl border border-dashed text-sm transition app-border app-text-secondary hover:border-violet-500/50 hover:bg-violet-500/10"
+          >
+            <span className="inline-flex items-center gap-2">
+              <ImageIcon className="h-4 w-4" />
+              Attach a photo
+            </span>
+            <span className="text-xs app-text-muted">
+              JPG or PNG. It is cropped to the same size as every project.
+            </span>
+          </button>
+        )}
+
+        {coverError && <p className="mt-1.5 text-xs text-red-400">{coverError}</p>}
 
         <FormSection>Settings</FormSection>
 
@@ -284,30 +390,129 @@ function ProjectForm({
               ))}
             </select>
           </Field>
+
+          <Field label="Delivery owner">
+            <div className="flex items-center gap-2">
+              <UserAvatar name={owner || undefined} size="md" />
+
+              <select
+                value={owner}
+                onChange={(event) => setOwner(event.target.value)}
+                className={inputClass}
+              >
+                <option value="">Not assigned</option>
+                {INTERNAL_USERS.map((user) => (
+                  <option key={user} value={user}>
+                    {user}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </Field>
+
+          <div className="flex items-end">
+            <label className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-xl border px-3 py-2.5 app-border">
+              <span className="text-sm font-medium app-text-primary">
+                Confidential project
+              </span>
+
+              <input
+                type="checkbox"
+                checked={confidential}
+                onChange={(event) => setConfidential(event.target.checked)}
+                className="h-4 w-4 accent-violet-600"
+              />
+            </label>
+          </div>
         </div>
 
-        <label className="mt-3 flex cursor-pointer items-center justify-between gap-3 rounded-xl border px-3 py-3 app-border">
-          <span>
-            <span className="block text-sm font-medium app-text-primary">
-              Confidential project
-            </span>
-            <span className="block text-xs app-text-muted">
-              Only people with access can see its details
-            </span>
-          </span>
+        <FormSection>Links</FormSection>
 
-          <input
-            type="checkbox"
-            checked={confidential}
-            onChange={(event) => setConfidential(event.target.checked)}
-            className="h-4 w-4 accent-violet-600"
-          />
-        </label>
+        <div className="space-y-3">
+          <Field label="Project / game website">
+            <input
+              value={website}
+              onChange={(event) => setWebsite(event.target.value)}
+              placeholder="https://..."
+              className={inputClass}
+            />
+          </Field>
 
-        <p className="mt-3 text-xs app-text-muted">
-          The cover is generated automatically. You can change it later from the
-          project view.
-        </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Android download">
+              <input
+                value={androidUrl}
+                onChange={(event) => setAndroidUrl(event.target.value)}
+                placeholder="https://play.google.com/..."
+                className={inputClass}
+              />
+            </Field>
+
+            <Field label="iOS download">
+              <input
+                value={iosUrl}
+                onChange={(event) => setIosUrl(event.target.value)}
+                placeholder="https://apps.apple.com/..."
+                className={inputClass}
+              />
+            </Field>
+          </div>
+
+          <div>
+            <span className="mb-1.5 block text-xs font-semibold app-text-secondary">
+              Other links
+            </span>
+
+            <div className="space-y-2">
+              {otherLinks.map((link) => (
+                <div key={link.id} className="grid grid-cols-[1fr_1.6fr_auto] gap-2">
+                  <input
+                    value={link.title}
+                    onChange={(event) => updateOtherLink(link.id, "title", event.target.value)}
+                    placeholder="Title"
+                    className={inputClass}
+                  />
+
+                  <input
+                    value={link.url}
+                    onChange={(event) => updateOtherLink(link.id, "url", event.target.value)}
+                    placeholder="https://..."
+                    className={inputClass}
+                  />
+
+                  <button
+                    type="button"
+                    aria-label="Remove link"
+                    onClick={() =>
+                      setOtherLinks((current) =>
+                        current.length > 1
+                          ? current.filter((item) => item.id !== link.id)
+                          : [{ id: link.id, title: "", url: "" }]
+                      )
+                    }
+                    className="rounded-xl border px-2.5 app-border app-text-muted hover:bg-black/[0.04]"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                setOtherLinks((current) => [
+                  ...current,
+                  { id: `link-${current.length}-${Date.now()}`, title: "", url: "" },
+                ])
+              }
+              className="mt-2 inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold app-border app-text-secondary hover:bg-black/[0.04]"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add another link
+            </button>
+          </div>
+        </div>
       </div>
 
       <FormFooter canSubmit={canSubmit} submitLabel="Create project" onCancel={onCancel} />
@@ -470,12 +675,12 @@ function CandidateForm({
   const [salaryCurrent, setSalaryCurrent] = useState("");
   const [salaryExpected, setSalaryExpected] = useState("");
   const [workRelation, setWorkRelation] = useState("");
-  const [source, setSource] = useState(SOURCE_OPTIONS[0]);
+  const [seniority, setSeniority] = useState("");
   const [recruiterOwner, setRecruiterOwner] = useState(OWNER_OPTIONS[0]);
   const [processStatus, setProcessStatus] =
-    useState<CandidateProcessStatus>("sourced");
+    useState<CandidateProcessStatus>("contacted");
   const [resumeStatus, setResumeStatus] = useState<CandidateResumeStatus>("none");
-  const [talentType, setTalentType] = useState<CandidateTalentType>("external");
+  const [isInternal, setIsInternal] = useState(false);
   const [notes, setNotes] = useState("");
 
   const canSubmit = Boolean(
@@ -501,11 +706,11 @@ function CandidateForm({
       salaryCurrent: salaryCurrent.trim(),
       salaryExpected: salaryExpected.trim(),
       workRelation: workRelation.trim(),
-      source,
+      seniority,
       recruiterOwner,
       processStatus,
       resumeStatus,
-      talentType,
+      talentType: isInternal ? "internal_candidate" : "external",
       notes: notes.trim(),
       },
       projects && selectedProject && selectedPosition
@@ -679,15 +884,16 @@ function CandidateForm({
             </datalist>
           </Field>
 
-          <Field label="Source">
+          <Field label="Seniority">
             <select
-              value={source}
-              onChange={(event) => setSource(event.target.value)}
+              value={seniority}
+              onChange={(event) => setSeniority(event.target.value)}
               className={inputClass}
             >
-              {SOURCE_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {option}
+              <option value="">Not defined</option>
+              {SENIORITY_LEVELS.map((level) => (
+                <option key={level} value={level}>
+                  {level}
                 </option>
               ))}
             </select>
@@ -743,21 +949,25 @@ function CandidateForm({
             </select>
           </Field>
 
-          <Field label="Talent type">
-            <select
-              value={talentType}
-              onChange={(event) =>
-                setTalentType(event.target.value as CandidateTalentType)
-              }
-              className={inputClass}
-            >
-              {TALENT_TYPE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </Field>
+          <div className="flex items-end">
+            <label className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-xl border px-3 py-2 app-border">
+              <span>
+                <span className="block text-sm font-medium app-text-primary">
+                  Internal talent
+                </span>
+                <span className="block text-xs app-text-muted">
+                  Already part of the company
+                </span>
+              </span>
+
+              <input
+                type="checkbox"
+                checked={isInternal}
+                onChange={(event) => setIsInternal(event.target.checked)}
+                className="h-4 w-4 accent-violet-600"
+              />
+            </label>
+          </div>
         </div>
 
         <div className="mt-3">
@@ -777,11 +987,229 @@ function CandidateForm({
   );
 }
 
+const GENERIC_ROLE_WORDS = new Set([
+  "engineer",
+  "developer",
+  "artist",
+  "designer",
+  "manager",
+  "senior",
+  "junior",
+  "lead",
+  "specialist",
+  "analyst",
+  "tester",
+]);
+
+function getRoleKeywords(title: string) {
+  return title
+    .split(/[\s/·-]+/)
+    .filter((word) => word.length >= 2 && !GENERIC_ROLE_WORDS.has(word.toLowerCase()));
+}
+
+function ExistingCandidatePicker({
+  position,
+  directory,
+  onAdd,
+  onDone,
+}: {
+  position: PositionCardType;
+  directory: DirectoryCandidate[];
+  onAdd: (candidate: CandidateMini) => void;
+  onDone: () => void;
+}) {
+  const keywords = getRoleKeywords(position.title);
+  const [query, setQuery] = useState("");
+  const [useSuggestion, setUseSuggestion] = useState(keywords.length > 0);
+
+  const term = query.trim().toLowerCase();
+
+  const results = directory
+    .filter((entry) => {
+      const text = `${entry.candidate.name} ${entry.candidate.role} ${entry.candidate.location}`.toLowerCase();
+
+      if (term && !text.includes(term)) {
+        return false;
+      }
+
+      if (useSuggestion) {
+        return keywords.some((keyword) => text.includes(keyword.toLowerCase()));
+      }
+
+      return true;
+    })
+    .slice(0, 40);
+
+  return (
+    <div>
+      <div className="max-h-[62vh] overflow-y-auto px-6 pb-3">
+        <input
+          autoFocus
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search by name, role or location..."
+          className={`${inputClass} mt-1`}
+        />
+
+        {keywords.length > 0 && (
+          <div className="my-3">
+            <button
+              type="button"
+              onClick={() => setUseSuggestion((current) => !current)}
+              className={`rounded-full border px-3 py-1 text-xs transition ${
+                useSuggestion
+                  ? "border-violet-500 bg-violet-500/15 app-text-primary"
+                  : "app-border app-text-secondary"
+              }`}
+            >
+              Suggested: {keywords.join(" / ")}
+            </button>
+          </div>
+        )}
+
+        <div>
+          {results.map((entry) => {
+            const alreadyHere = position.candidates.some(
+              (candidate) => candidate.id === entry.candidate.id
+            );
+            const otherPositions = entry.positions.filter(
+              (item) => item.positionId !== position.id
+            );
+
+            return (
+              <div
+                key={entry.candidate.id}
+                className="flex items-center gap-3 border-t py-3 first:border-t-0 app-border"
+              >
+                <UserAvatar name={entry.candidate.name} size="md" />
+
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold app-text-primary">
+                    {entry.candidate.name}
+                  </p>
+                  <p className="text-xs app-text-muted">
+                    {entry.candidate.role} · {entry.candidate.location}
+                  </p>
+
+                  {otherPositions.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {otherPositions.map((item) => (
+                        <span
+                          key={item.positionId}
+                          className="rounded-full border px-2 py-0.5 text-[10.5px] app-border app-text-secondary"
+                        >
+                          Also in: {item.label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  disabled={alreadyHere}
+                  onClick={() => onAdd(entry.candidate)}
+                  style={
+                    alreadyHere ? undefined : { backgroundColor: "#7c3aed", color: "#ffffff" }
+                  }
+                  className="shrink-0 rounded-xl border px-3 py-1.5 text-xs font-semibold app-border disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {alreadyHere ? "Already here" : "Add to this position"}
+                </button>
+              </div>
+            );
+          })}
+
+          {results.length === 0 && (
+            <p className="border-t py-6 text-center text-sm app-border app-text-muted">
+              No candidates found. Try without the suggestion or create a new one.
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="flex justify-end border-t px-6 py-4 app-border">
+        <button
+          type="button"
+          onClick={onDone}
+          className="rounded-xl border px-4 py-2 text-sm font-medium app-border app-text-secondary hover:bg-black/[0.04]"
+        >
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CandidateEntry({
+  position,
+  directory,
+  onAddExisting,
+  onCreate,
+  onClose,
+}: {
+  position: PositionCardType;
+  directory?: DirectoryCandidate[];
+  onAddExisting?: (candidate: CandidateMini) => void;
+  onCreate: (payload: NewCandidatePayload) => void;
+  onClose: () => void;
+}) {
+  const canSearch = Boolean(directory && onAddExisting);
+  const [tab, setTab] = useState<"search" | "new">(canSearch ? "search" : "new");
+
+  return (
+    <>
+      {canSearch && (
+        <div className="px-6 pb-1 pt-1">
+          <div className="inline-flex rounded-xl border p-1 app-border">
+            {(
+              [
+                { value: "search", label: "Search existing" },
+                { value: "new", label: "Create new" },
+              ] as Array<{ value: "search" | "new"; label: string }>
+            ).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setTab(option.value)}
+                className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
+                  tab === option.value
+                    ? "bg-violet-500 text-white"
+                    : "app-text-secondary hover:bg-black/[0.04]"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab === "search" && canSearch && directory && onAddExisting ? (
+        <ExistingCandidatePicker
+          position={position}
+          directory={directory}
+          onAdd={onAddExisting}
+          onDone={onClose}
+        />
+      ) : (
+        <CandidateForm
+          initialRole={position.title}
+          onCancel={onClose}
+          onSubmit={(payload) => onCreate(payload)}
+        />
+      )}
+    </>
+  );
+}
+
 export function CreateEntityModal({
   mode,
   project = null,
   position = null,
   projects,
+  existingCandidates,
+  onAddExistingCandidate,
   onClose,
   onCreateProject,
   onCreatePosition,
@@ -874,13 +1302,20 @@ export function CreateEntityModal({
         )}
 
         {mode === "candidate" && project && position && (
-          <CandidateForm
-            initialRole={position.title}
-            onCancel={onClose}
-            onSubmit={(payload) => {
+          <CandidateEntry
+            position={position}
+            directory={existingCandidates}
+            onAddExisting={
+              onAddExistingCandidate
+                ? (candidate) =>
+                    onAddExistingCandidate(project.id, position.id, candidate)
+                : undefined
+            }
+            onCreate={(payload) => {
               onCreateCandidate(project.id, position.id, payload);
               onClose();
             }}
+            onClose={onClose}
           />
         )}
 

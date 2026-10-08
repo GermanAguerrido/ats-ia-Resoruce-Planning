@@ -13,6 +13,15 @@ import type {
   CandidateProcessStatus,
   CandidateResumeStatus,
 } from "@/app/data/resourcePlanningMock";
+import {
+  AGING_DAYS,
+  CONTACT_ALERT_DAYS,
+  getDaysInProcess,
+  getDaysSinceContact,
+  getPresentationReadiness,
+  isHiredCandidate,
+  isInProcessCandidate,
+} from "@/app/lib/candidateStatus";
 
 type Props = {
   candidate: CandidateMini;
@@ -32,7 +41,7 @@ const processStatusConfig: Record<
     className: "rp-candidate-contacted",
   },
   screening: {
-    label: "Screening",
+    label: "Interviewed",
     className: "rp-candidate-approved",
   },
   presented: {
@@ -44,12 +53,20 @@ const processStatusConfig: Record<
     className: "rp-candidate-tech-interview",
   },
   client_interview: {
-    label: "Client Interview",
+    label: "Client Tech Interview",
     className: "rp-candidate-interviewed",
   },
-  offer: {
-    label: "Offer",
+  to_offer: {
+    label: "To offer",
     className: "rp-candidate-wip-resume",
+  },
+  offer: {
+    label: "Offered",
+    className: "rp-candidate-wip-resume",
+  },
+  offer_rejected: {
+    label: "Offer rejected",
+    className: "rp-position-cancelled",
   },
   hired: {
     label: "Hired",
@@ -70,15 +87,15 @@ const resumeStatusConfig: Record<
   { label: string; className: string }
 > = {
   none: {
-    label: "No Resume",
+    label: "No resume",
     className: "rp-status-badge",
   },
   wip_resume: {
-    label: "WIP Resume",
+    label: "WIP resume",
     className: "rp-candidate-wip-resume",
   },
   resume_ready: {
-    label: "Resume Ready",
+    label: "Resume ready",
     className: "rp-candidate-resume",
   },
 };
@@ -92,22 +109,43 @@ type CandidateSignal = {
 
 function getCandidateSignals(candidate: CandidateMini): CandidateSignal[] {
   const signals: CandidateSignal[] = [];
+  const active = isInProcessCandidate(candidate);
+  const daysInProcess = getDaysInProcess(candidate);
+  const daysSinceContact = getDaysSinceContact(candidate);
+  const readiness = getPresentationReadiness(candidate);
 
-  if (
-    typeof candidate.daysInProcess === "number" &&
-    candidate.daysInProcess >= 14 &&
-    candidate.processStatus !== "hired" &&
-    candidate.processStatus !== "rejected"
-  ) {
+  if (active && daysInProcess !== null && daysInProcess >= AGING_DAYS) {
     signals.push({
       id: "aging-alert",
-      label: `${candidate.daysInProcess} days in process`,
+      label: `${daysInProcess} days in process`,
       icon: "alert",
       className: "rp-auto-signal-warning",
     });
   }
 
-  if (candidate.resumeStatus === "none") {
+  if (
+    active &&
+    daysSinceContact !== null &&
+    daysSinceContact >= CONTACT_ALERT_DAYS
+  ) {
+    signals.push({
+      id: "no-contact",
+      label: `No contact ${daysSinceContact}d`,
+      icon: "clock",
+      className: "rp-auto-signal-warning",
+    });
+  }
+
+  if (readiness.applicable && readiness.ready) {
+    signals.push({
+      id: "ready-to-present",
+      label: "Ready to present",
+      icon: "check",
+      className: "rp-auto-signal-success",
+    });
+  }
+
+  if (active && candidate.resumeStatus === "none") {
     signals.push({
       id: "resume-missing",
       label: "Resume missing",
@@ -116,23 +154,11 @@ function getCandidateSignals(candidate: CandidateMini): CandidateSignal[] {
     });
   }
 
-  if (candidate.resumeStatus === "wip_resume") {
+  if (active && candidate.resumeStatus === "wip_resume") {
     signals.push({
       id: "resume-wip",
       label: "Resume WIP",
       icon: "clock",
-      className: "rp-auto-signal-info",
-    });
-  }
-
-  if (
-    candidate.resumeStatus === "resume_ready" &&
-    candidate.processStatus !== "hired"
-  ) {
-    signals.push({
-      id: "ready-to-present",
-      label: "Ready to present",
-      icon: "check",
       className: "rp-auto-signal-info",
     });
   }
@@ -146,13 +172,10 @@ function getCandidateSignals(candidate: CandidateMini): CandidateSignal[] {
     });
   }
 
-  if (
-    candidate.processStatus === "hired" ||
-    candidate.talentType === "trick_internal"
-  ) {
+  if (isHiredCandidate(candidate)) {
     signals.push({
-      id: "trick-internal",
-      label: "Moved to Trick Internal",
+      id: "hired-internal",
+      label: "Hired · Internal",
       icon: "user",
       className: "rp-auto-signal-success",
     });

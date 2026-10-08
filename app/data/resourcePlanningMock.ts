@@ -23,8 +23,10 @@ export type CandidateProcessStatus =
   | "presented"
   | "tech_interview"
   | "client_interview"
+  | "to_offer"
   | "offer"
   | "hired"
+  | "offer_rejected"
   | "rejected"
   | "stand_by";
 
@@ -38,6 +40,32 @@ export type CandidateTimelineItem = {
   description: string;
   date: string;
   author: string;
+};
+
+// Cada cambio de estado guarda su fecha: permite medir cuánto tarda cada etapa
+export type StageHistoryEntry = {
+  status: CandidateProcessStatus;
+  enteredAt: string;
+  leftAt?: string;
+  // Fecha y hora de la entrevista (puede cargarse por adelantado): AAAA-MM-DDTHH:mm
+  scheduledFor?: string;
+  interviewer?: string;
+  // En la entrevista del cliente: qué cliente fue
+  clientName?: string;
+};
+
+export type NdaStatus = "required" | "sent" | "signed";
+
+export type CandidateFile = {
+  id: string;
+  name: string;
+  size: number;
+};
+
+export type CandidateFiles = {
+  cv?: CandidateFile[];
+  portfolio?: CandidateFile[];
+  trickResume?: CandidateFile[];
 };
 
 export type CandidateMini = {
@@ -59,10 +87,39 @@ export type CandidateMini = {
   source?: string;
   notes?: string;
   recruiterOwner?: string;
+  // Recruiters adicionales (el owner es siempre recruiterOwner)
+  coRecruiters?: string[];
+  seniority?: string;
+  // true cuando el nivel fue validado en la entrevista técnica interna
+  seniorityValidated?: boolean;
+  techInterviewDoneAt?: string;
+  // Fecha en que el recruiter trajo al candidato a la posición (los días en proceso se calculan desde acá)
+  processStartedAt?: string;
   lastContactAt?: string;
+  // Intentos de contacto seguidos sin respuesta
+  contactAttempts?: number;
+  hiredAt?: string;
+  // Fecha en que la persona empieza a trabajar (puede ser posterior a la contratación)
+  startDate?: string;
+  // Motivo del último resultado (Rejected / Offer rejected / Stand-by) y fecha de revisión
+  outcomeReason?: string;
+  reviewAt?: string;
+  stageHistory?: StageHistoryEntry[];
+  // Sin valor = "required" si el proyecto exige NDA
+  ndaStatus?: NdaStatus;
+  files?: CandidateFiles;
+  // Valor fijo anterior; se usa solo si no hay processStartedAt
   daysInProcess?: number;
   timeline?: CandidateTimelineItem[];
 };
+
+// Fecha objetivo flexible de una posición
+export type PositionTarget =
+  | { type: "asap" }
+  | { type: "date"; date: string }
+  | { type: "week"; week: 1 | 2 | 3 | 4; month: number; year: number }
+  | { type: "month"; month: number; year: number }
+  | { type: "quarter"; quarter: 1 | 2 | 3 | 4; year: number };
 
 export type PositionCard = {
   id: string;
@@ -71,6 +128,11 @@ export type PositionCard = {
   status: PositionStatus;
   owner: string;
   quantity?: number;
+  jdReviewedAt?: string;
+  jdReviewedBy?: string;
+  moreCandidatesRequestedAt?: string;
+  openedAt?: string;
+  target?: PositionTarget;
   candidates: CandidateMini[];
 };
 
@@ -83,6 +145,10 @@ export type ProjectColumn = {
   confidential: boolean;
   cover: string;
   description: string;
+  owner?: string;
+  members?: string[];
+  // Si es confidencial: ¿exige NDA antes de las pruebas técnicas? (por defecto sí)
+  ndaRequired?: boolean;
   positions: PositionCard[];
 };
 

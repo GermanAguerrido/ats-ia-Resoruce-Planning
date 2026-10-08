@@ -5,11 +5,20 @@ import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Plus } from "lucide-rea
 import { ResourcePlanningDetailModal } from "../components/resource-planning/ResourcePlanningDetailModal";
 import { CreateEntityModal } from "../components/resource-planning/CreateEntityModal";
 import { useBoardState } from "../hooks/useBoardState";
+import {
+  AGING_DAYS,
+  PROCESS_FLOW,
+  PROCESS_OUTCOMES,
+  PROCESS_STATUS_INFO,
+  RESUME_STATUS_INFO,
+  getDaysInProcess,
+  isHiredCandidate,
+  isInProcessCandidate,
+} from "../lib/candidateStatus";
+import { buildCandidateDirectory } from "../lib/candidateDirectory";
 import type {
   CandidateMini,
-  CandidateProcessStatus,
   CandidateResumeStatus,
-  CandidateTalentType,
   PositionCard,
   ProjectColumn,
 } from "../data/resourcePlanningMock";
@@ -43,58 +52,26 @@ type CreateTarget =
   | { kind: "candidate"; projectId: string; positionId: string }
   | null;
 
-const AGING_THRESHOLD_DAYS = 14;
-
-const processLabels: Record<CandidateProcessStatus, { label: string; tone: Tone }> = {
-  sourced: { label: "Sourced", tone: "gray" },
-  contacted: { label: "Contacted", tone: "blue" },
-  screening: { label: "Screening", tone: "blue" },
-  presented: { label: "Presented", tone: "violet" },
-  tech_interview: { label: "Tech Interview", tone: "violet" },
-  client_interview: { label: "Client Interview", tone: "amber" },
-  offer: { label: "Offer", tone: "amber" },
-  hired: { label: "Hired", tone: "green" },
-  rejected: { label: "Rejected", tone: "red" },
-  stand_by: { label: "Stand by", tone: "gray" },
-};
-
-const resumeLabels: Record<CandidateResumeStatus, { label: string; tone: Tone }> = {
-  none: { label: "No resume", tone: "gray" },
-  wip_resume: { label: "WIP resume", tone: "amber" },
-  resume_ready: { label: "Resume ready", tone: "green" },
-};
-
-const talentLabels: Record<CandidateTalentType, { label: string; tone: Tone }> = {
-  external: { label: "External", tone: "blue" },
-  internal_candidate: { label: "Internal", tone: "violet" },
-  trick_internal: { label: "Trick internal", tone: "amber" },
-};
+const processLabels = PROCESS_STATUS_INFO;
+const resumeLabels = RESUME_STATUS_INFO;
+const processOrder = [...PROCESS_FLOW, ...PROCESS_OUTCOMES].map((item) => item.value);
 
 const filterControlClass =
   "rounded-xl border px-3 py-2 text-sm outline-none transition focus:border-violet-500 app-input";
-
-function isHired(candidate: CandidateMini) {
-  return (
-    candidate.processStatus === "hired" || candidate.talentType === "trick_internal"
-  );
-}
-
-function isInProcess(candidate: CandidateMini) {
-  return !isHired(candidate) && candidate.processStatus !== "rejected";
-}
-
-function isAging(candidate: CandidateMini) {
-  return (
-    isInProcess(candidate) &&
-    typeof candidate.daysInProcess === "number" &&
-    candidate.daysInProcess >= AGING_THRESHOLD_DAYS
-  );
-}
 
 function uniqueSorted(values: Array<string | undefined>) {
   return Array.from(
     new Set(values.filter((value): value is string => Boolean(value?.trim())))
   ).sort((a, b) => a.localeCompare(b));
+}
+
+const isHired = isHiredCandidate;
+const isInProcess = isInProcessCandidate;
+
+function isAging(candidate: CandidateMini) {
+  const days = getDaysInProcess(candidate);
+
+  return isInProcess(candidate) && days !== null && days >= AGING_DAYS;
 }
 
 function getInitials(name: string) {
@@ -288,7 +265,7 @@ export default function CandidatesPage() {
       if (sort.key === "name") {
         comparison = a.main.name.localeCompare(b.main.name);
       } else if (sort.key === "days") {
-        comparison = (a.main.daysInProcess ?? -1) - (b.main.daysInProcess ?? -1);
+        comparison = (getDaysInProcess(a.main) ?? -1) - (getDaysInProcess(b.main) ?? -1);
       } else {
         comparison = (a.main.lastContactAt ?? "").localeCompare(b.main.lastContactAt ?? "");
       }
@@ -368,6 +345,12 @@ export default function CandidatesPage() {
           (position) => position.id === createTarget.positionId
         ) ?? null)
       : null;
+
+  // Candidatos existentes (para buscarlos y sumarlos a una posición)
+  const candidateDirectory = useMemo(
+    () => buildCandidateDirectory(orderedProjects),
+    [orderedProjects]
+  );
 
   const projectsWithPositions = orderedProjects.filter(
     (project) => project.positions.length > 0
@@ -459,7 +442,7 @@ export default function CandidatesPage() {
             className={filterControlClass}
           >
             <option value="">All statuses</option>
-            {(Object.keys(processLabels) as CandidateProcessStatus[]).map((status) => (
+            {processOrder.map((status) => (
               <option key={status} value={status}>
                 {processLabels[status].label}
               </option>
@@ -576,7 +559,6 @@ export default function CandidatesPage() {
                 const candidate = row.main;
                 const process = processLabels[candidate.processStatus];
                 const resume = resumeLabels[candidate.resumeStatus];
-                const talent = talentLabels[candidate.talentType];
                 const aging = isAging(candidate);
 
                 return (
@@ -621,7 +603,12 @@ export default function CandidatesPage() {
                     </td>
 
                     <td className="px-4 py-3">
-                      <Tag tone={process.tone}>{process.label}</Tag>
+                      <Tag tone={process.tone}>
+                        {process.label}
+                        {candidate.hiredAt && candidate.processStatus === "hired"
+                          ? ` · ${candidate.hiredAt}`
+                          : ""}
+                      </Tag>
                     </td>
 
                     <td className="px-4 py-3">
@@ -629,7 +616,11 @@ export default function CandidatesPage() {
                     </td>
 
                     <td className="px-4 py-3">
-                      <Tag tone={talent.tone}>{talent.label}</Tag>
+                      {candidate.talentType === "external" ? (
+                        <span className="app-text-muted">—</span>
+                      ) : (
+                        <Tag tone="violet">Internal</Tag>
+                      )}
                     </td>
 
                     <td className="px-4 py-3 app-text-secondary">
@@ -642,7 +633,7 @@ export default function CandidatesPage() {
 
                     <td className={`px-4 py-3 ${aging ? "cd-aging" : "app-text-primary"}`}>
                       {aging && <AlertTriangle className="mr-1 inline h-3.5 w-3.5" />}
-                      {candidate.daysInProcess ?? "—"}
+                      {getDaysInProcess(candidate) ?? "—"}
                     </td>
 
                     <td className="px-4 py-3 app-text-secondary">
@@ -675,6 +666,7 @@ export default function CandidatesPage() {
           project={modalProject}
           initialPosition={modalSession.initialPosition}
           initialCandidate={modalSession.initialCandidate}
+          allProjects={projectColumns}
           onClose={() => setModalSession(null)}
           onProjectUpdate={board.updateProject}
           onPositionUpdate={board.updatePosition}
@@ -726,6 +718,8 @@ export default function CandidatesPage() {
             onCreateProject={board.createProject}
             onCreatePosition={board.createPosition}
             onCreateCandidate={board.createCandidate}
+            existingCandidates={candidateDirectory}
+            onAddExistingCandidate={board.addExistingCandidate}
           />
         )}
     </div>

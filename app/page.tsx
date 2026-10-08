@@ -17,6 +17,12 @@ import {
   type ProjectColumn,
 } from "@/app/data/resourcePlanningMock";
 import { readStoredBoard } from "@/app/lib/boardStorage";
+import {
+  AGING_DAYS,
+  getDaysInProcess,
+  isHiredCandidate,
+  isInProcessCandidate,
+} from "@/app/lib/candidateStatus";
 
 type AttentionTone = "warning" | "danger" | "info" | "success";
 
@@ -42,16 +48,15 @@ type CandidateRef = {
   candidate: CandidateMini;
 };
 
-const AGING_THRESHOLD_DAYS = 14;
 
 const pipelineStages: Array<{ value: CandidateProcessStatus; label: string }> = [
-  { value: "sourced", label: "Sourced" },
   { value: "contacted", label: "Contacted" },
-  { value: "screening", label: "Screening" },
-  { value: "presented", label: "Presented" },
+  { value: "screening", label: "Interviewed" },
   { value: "tech_interview", label: "Tech Interview" },
-  { value: "client_interview", label: "Client Interview" },
-  { value: "offer", label: "Offer" },
+  { value: "presented", label: "Presented" },
+  { value: "client_interview", label: "Client Tech Interview" },
+  { value: "to_offer", label: "To offer" },
+  { value: "offer", label: "Offered" },
   { value: "hired", label: "Hired" },
 ];
 
@@ -77,15 +82,8 @@ const priorityBadge: Record<ProjectColumn["priority"], { label: string; classNam
   },
 };
 
-function isHired(candidate: CandidateMini) {
-  return (
-    candidate.processStatus === "hired" || candidate.talentType === "trick_internal"
-  );
-}
-
-function isInProcess(candidate: CandidateMini) {
-  return !isHired(candidate) && candidate.processStatus !== "rejected";
-}
+const isHired = isHiredCandidate;
+const isInProcess = isInProcessCandidate;
 
 function pluralize(count: number, one: string, many: string) {
   return `${count} ${count === 1 ? one : many}`;
@@ -268,9 +266,7 @@ export default function HomePage() {
 
     inProcess
       .filter(
-        (item) =>
-          typeof item.candidate.daysInProcess === "number" &&
-          item.candidate.daysInProcess >= AGING_THRESHOLD_DAYS
+        (item) => (getDaysInProcess(item.candidate) ?? 0) >= AGING_DAYS
       )
       .forEach((item) =>
         attention.push({
@@ -278,7 +274,7 @@ export default function HomePage() {
           tone: "warning",
           icon: <AlertTriangle className="h-4 w-4" />,
           title: `Aging alert · ${item.candidate.name}`,
-          description: `${item.candidate.daysInProcess} days in process for ${item.position.title} · ${item.position.seniority} (${item.project.projectName}). Consider reviewing the next step.`,
+          description: `${getDaysInProcess(item.candidate)} days in process for ${item.position.title} · ${item.position.seniority} (${item.project.projectName}). Consider reviewing the next step.`,
         })
       );
 

@@ -10,6 +10,8 @@ import {
   Bold,
   BookOpen,
   BriefcaseBusiness,
+  Building2,
+  CalendarDays,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
@@ -19,7 +21,6 @@ import {
   FileText,
   Flag,
   FlaskConical,
-  Globe,
   ImageIcon,
   Italic,
   LinkIcon,
@@ -31,6 +32,7 @@ import {
   MessageSquare,
   Paperclip,
   PauseCircle,
+  Phone,
   Plus,
   Search,
   ShieldCheck,
@@ -47,31 +49,74 @@ import type {
   CandidateMini,
   CandidateProcessStatus,
   CandidateResumeStatus,
-  CandidateTalentType,
   PositionCard as PositionCardType,
+  NdaStatus,
+  PositionTarget,
   ProjectColumn as ProjectColumnType,
   ProjectStatus,
 } from "@/app/data/resourcePlanningMock";
+import {
+  AGING_DAYS,
+  CONTACT_ALERT_DAYS,
+  INTERVIEW_LABELS,
+  PROCESS_FLOW,
+  PROCESS_OUTCOMES,
+  PROCESS_STATUS_INFO,
+  RESUME_STATUS_INFO,
+  SENIORITY_LEVELS,
+  STAGE_ALERT_DAYS,
+  STAGE_WARN_DAYS,
+  appendStageEntry,
+  daysSince,
+  formatDateTime,
+  getCurrentStageEntry,
+  getDaysInCurrentStage,
+  getDaysInProcess,
+  getProcessStatusIndex,
+  getDaysSinceContact,
+  getPresentationReadiness,
+  isHiredCandidate,
+  isInProcessCandidate,
+  normalizeSeniority,
+  seniorityRank,
+  todayIso,
+} from "@/app/lib/candidateStatus";
+import { fileToCoverDataUrl } from "@/app/lib/imageUtils";
+import { handleRichPaste } from "@/app/lib/richText";
+import { formatPositionTarget } from "@/app/lib/positionTarget";
+import { INTERNAL_USERS, getUserInitials } from "@/app/lib/users";
+import { useCurrentUser } from "@/app/lib/currentUser";
+import { buildStageChange, getHireMetrics, type StageMoveInput } from "@/app/lib/stageGates";
+import { addTechInterview } from "@/app/lib/techInterviews";
+import { StageTransitionDialog } from "./StageTransitionDialog";
+import { TechInterviewsSection } from "./TechInterviewsSection";
 import { CandidateMiniCard } from "./CandidateMiniCard";
+import { CandidateStageHistory } from "./CandidateStageHistory";
+import { PositionTargetField } from "./PositionTargetField";
+import { UserAvatar } from "./UserAvatar";
 
 type ProjectPriority = ProjectColumnType["priority"];
 
-type CandidateOverride = Partial<{
-  processStatus: CandidateProcessStatus;
-  resumeStatus: CandidateResumeStatus;
-  talentType: CandidateTalentType;
-  recruiterOwner: string;
-}>;
+type CandidateOverride = Partial<CandidateMini>;
 
 type PositionOverride = Partial<{
   status: PositionCardType["status"];
   owner: string;
+  jdReviewedAt: string | undefined;
+  jdReviewedBy: string | undefined;
+  moreCandidatesRequestedAt: string | undefined;
+  openedAt: string;
+  target: PositionTarget;
 }>;
 
 type ProjectOverride = Partial<{
   status: ProjectStatus;
   priority: ProjectPriority;
   confidential: boolean;
+  owner: string;
+  members: string[];
+  cover: string;
+  ndaRequired: boolean;
 }>;
 
 type Props = {
@@ -81,7 +126,8 @@ type Props = {
   onClose: () => void;
   onCandidateUpdate?: (
     candidateId: string,
-    updates: CandidateOverride
+    updates: CandidateOverride,
+    positionId?: string
   ) => void;
   onPositionUpdate?: (
     positionId: string,
@@ -97,6 +143,8 @@ type Props = {
     project: ProjectColumnType,
     position: PositionCardType
   ) => void;
+  // Todos los proyectos: para armar el registro de entrevistas del candidato
+  allProjects?: ProjectColumnType[];
 };
 
 type LocalActivity = {
@@ -121,9 +169,9 @@ type ProjectOverrides = Record<string, ProjectOverride>;
 
 type QuickActionId =
   | "change_candidate_status"
-  | "assign_recruiter"
-  | "mark_resume_ready"
-  | "move_to_trick_internal"
+  | "log_contact"
+  | "record_tech_interview"
+  | "add_recruiter"
   | "change_position_status"
   | "assign_internal_member"
   | "request_more_candidates"
@@ -131,7 +179,6 @@ type QuickActionId =
   | "update_project_priority"
   | "add_project_member"
   | "mark_as_confidential"
-  | "request_client_follow_up"
   | "archive_project"
   | "mention_user";
 
@@ -188,112 +235,20 @@ const positionStatusConfig = {
   },
 };
 
-const processStatusOrder: CandidateProcessStatus[] = [
-  "sourced",
-  "contacted",
-  "screening",
-  "presented",
-  "tech_interview",
-  "client_interview",
-  "offer",
-  "hired",
-];
-
-const processStatusConfig: Record<
-  CandidateProcessStatus,
-  { label: string; className: string }
-> = {
-  sourced: {
-    label: "Sourced",
-    className: "rp-candidate-contacted",
-  },
-  contacted: {
-    label: "Contacted",
-    className: "rp-candidate-contacted",
-  },
-  screening: {
-    label: "Screening",
-    className: "rp-candidate-approved",
-  },
-  presented: {
-    label: "Presented",
-    className: "rp-candidate-resume",
-  },
-  tech_interview: {
-    label: "Tech Interview",
-    className: "rp-candidate-tech-interview",
-  },
-  client_interview: {
-    label: "Client Interview",
-    className: "rp-candidate-interviewed",
-  },
-  offer: {
-    label: "Offer",
-    className: "rp-candidate-wip-resume",
-  },
-  hired: {
-    label: "Hired",
-    className: "rp-candidate-hired",
-  },
-  rejected: {
-    label: "Rejected",
-    className: "rp-position-cancelled",
-  },
-  stand_by: {
-    label: "Stand by",
-    className: "rp-position-on-hold",
-  },
-};
-
-const resumeStatusConfig: Record<
-  CandidateResumeStatus,
-  { label: string; className: string }
-> = {
-  none: {
-    label: "No Resume",
-    className: "rp-status-badge",
-  },
-  wip_resume: {
-    label: "WIP Resume",
-    className: "rp-candidate-wip-resume",
-  },
-  resume_ready: {
-    label: "Resume Ready",
-    className: "rp-candidate-resume",
-  },
-};
-
-const talentTypeConfig: Record<
-  CandidateTalentType,
-  { label: string; className: string }
-> = {
-  external: {
-    label: "External",
-    className: "rp-status-badge",
-  },
-  internal_candidate: {
-    label: "Internal Candidate",
-    className: "rp-priority-badge",
-  },
-  trick_internal: {
-    label: "Trick Internal",
-    className: "rp-candidate-trick-internal",
-  },
-};
-
 type AutomationInsight = {
   id: string;
   title: string;
   description: string;
-  severity: "success" | "warning" | "info" | "neutral";
+  severity: "success" | "warning" | "danger" | "info" | "neutral";
   icon: "alert" | "check" | "clock" | "file" | "pause" | "user" | "zap";
 };
 
 function applyCandidateOverride(
   candidate: CandidateMini,
-  overrides: CandidateOverrides
+  overrides: CandidateOverrides,
+  positionId?: string
 ): CandidateMini {
-  const override = overrides[candidate.id];
+  const override = overrides[`${positionId ?? ""}:${candidate.id}`];
 
   if (!override) {
     return candidate;
@@ -337,23 +292,6 @@ function applyProjectOverride(
   };
 }
 
-function getNextProcessStatus(
-  currentStatus: CandidateProcessStatus
-): CandidateProcessStatus {
-  if (currentStatus === "rejected") return "screening";
-  if (currentStatus === "stand_by") return "screening";
-
-  const currentIndex = processStatusOrder.indexOf(currentStatus);
-
-  if (currentIndex < 0) {
-    return "screening";
-  }
-
-  return processStatusOrder[
-    Math.min(currentIndex + 1, processStatusOrder.length - 1)
-  ];
-}
-
 function getNextPositionStatus(
   currentStatus: PositionCardType["status"]
 ): PositionCardType["status"] {
@@ -372,58 +310,154 @@ function getNextProjectPriority(
   return "high";
 }
 
-function getAutomationInsights(candidate: CandidateMini): AutomationInsight[] {
+function getCandidateInsights(
+  candidate: CandidateMini,
+  position: PositionCardType,
+  ndaApplies = false
+): AutomationInsight[] {
   const insights: AutomationInsight[] = [];
+  const active = isInProcessCandidate(candidate);
+  const daysInProcess = getDaysInProcess(candidate);
+  const daysSinceContact = getDaysSinceContact(candidate);
+  const readiness = getPresentationReadiness(candidate);
+
+  if (isHiredCandidate(candidate)) {
+    insights.push({
+      id: "hired",
+      title: "Hired",
+      description: candidate.hiredAt
+        ? `Hired on ${candidate.hiredAt}. Now internal talent, available for future positions.`
+        : "Now internal talent, available for future positions.",
+      severity: "success",
+      icon: "user",
+    });
+  }
+
+  if (readiness.applicable) {
+    insights.push(
+      readiness.ready
+        ? {
+            id: "ready-to-present",
+            title: "Ready to present",
+            description:
+              "Internal tech interview done and the Trick Studios resume is attached.",
+            severity: "success",
+            icon: "check",
+          }
+        : {
+            id: "not-ready",
+            title: "Not ready to present yet",
+            description: `Missing: ${readiness.missing.join(", ")}.`,
+            severity: "warning",
+            icon: "alert",
+          }
+    );
+  }
 
   if (
-    typeof candidate.daysInProcess === "number" &&
-    candidate.daysInProcess >= 14 &&
-    candidate.processStatus !== "hired" &&
-    candidate.processStatus !== "rejected"
+    active &&
+    daysSinceContact !== null &&
+    daysSinceContact >= CONTACT_ALERT_DAYS
   ) {
     insights.push({
-      id: "aging-alert",
-      title: "Aging alert",
-      description: `This candidate has been in process for ${candidate.daysInProcess} days. Consider reviewing next action or follow-up.`,
+      id: "no-contact",
+      title: `No contact for ${daysSinceContact} days`,
+      description: `Last contact: ${candidate.lastContactAt}. Log a contact or move the process.`,
+      severity: "warning",
+      icon: "clock",
+    });
+  }
+
+  if (active && (candidate.contactAttempts ?? 0) >= 2) {
+    insights.push({
+      id: "no-reply",
+      title: `${candidate.contactAttempts} contact attempts without reply`,
+      description: "Consider setting the candidate to Stand by.",
+      severity: "danger",
+      icon: "alert",
+    });
+  }
+
+  if (
+    candidate.seniority &&
+    seniorityRank(position.seniority) >= 0 &&
+    seniorityRank(candidate.seniority) < seniorityRank(position.seniority)
+  ) {
+    insights.push({
+      id: "below-level",
+      title: "Below the required level",
+      description: `Candidate: ${candidate.seniority} · position requires ${
+        normalizeSeniority(position.seniority) ?? position.seniority
+      }.`,
       severity: "warning",
       icon: "alert",
     });
   }
 
-  if (candidate.resumeStatus === "none") {
-    insights.push({
-      id: "resume-missing",
-      title: "Resume missing",
-      description:
-        "No internal resume is currently attached or marked as ready. Candidate should not be presented yet.",
-      severity: "neutral",
-      icon: "file",
-    });
+  const stageDays = getDaysInCurrentStage(candidate);
+  const stageEntry = getCurrentStageEntry(candidate);
+  const stageLabel = PROCESS_STATUS_INFO[candidate.processStatus].label;
+
+  if (ndaApplies && active) {
+    const nda = candidate.ndaStatus ?? "required";
+
+    if (
+      nda !== "signed" &&
+      getProcessStatusIndex(candidate.processStatus) >= getProcessStatusIndex("tech_interview")
+    ) {
+      insights.push({
+        id: "nda-pending",
+        title: "NDA pending",
+        description:
+          nda === "sent"
+            ? "The NDA was sent. Waiting for the signature before the technical tests."
+            : "The project is confidential: send the NDA before the technical tests.",
+        severity: "warning",
+        icon: "file",
+      });
+    }
   }
 
-  if (candidate.resumeStatus === "wip_resume") {
+  if (active && stageDays !== null && stageDays >= STAGE_ALERT_DAYS) {
     insights.push({
-      id: "resume-wip",
-      title: "Resume in progress",
-      description:
-        "Internal resume is being prepared. Presentation should wait until resume is marked as ready.",
-      severity: "info",
+      id: "stage-stuck",
+      title: `Stuck in ${stageLabel}`,
+      description: `${stageDays} days in this stage. Check what is blocking the process.`,
+      severity: "warning",
       icon: "clock",
     });
   }
 
   if (
-    candidate.resumeStatus === "resume_ready" &&
-    candidate.processStatus !== "hired" &&
-    candidate.processStatus !== "rejected"
+    active &&
+    stageEntry.scheduledFor &&
+    new Date(stageEntry.scheduledFor).getTime() < Date.now()
   ) {
     insights.push({
-      id: "ready-to-present",
-      title: "Ready to present",
-      description:
-        "Resume is ready and candidate can be considered for client presentation or next process step.",
-      severity: "success",
-      icon: "check",
+      id: "interview-passed",
+      title: "Interview date passed",
+      description: `The ${(
+        INTERVIEW_LABELS[stageEntry.status] ?? "stage"
+      ).toLowerCase()} was scheduled for ${formatDateTime(
+        stageEntry.scheduledFor
+      )}. Update the status or the date.`,
+      severity: "warning",
+      icon: "alert",
+    });
+  }
+
+  if (
+    active &&
+    daysInProcess !== null &&
+    daysInProcess >= AGING_DAYS &&
+    !(stageDays !== null && stageDays >= STAGE_ALERT_DAYS)
+  ) {
+    insights.push({
+      id: "aging-alert",
+      title: "Aging alert",
+      description: `In process for ${daysInProcess} days. Consider reviewing the next action.`,
+      severity: "warning",
+      icon: "alert",
     });
   }
 
@@ -431,38 +465,9 @@ function getAutomationInsights(candidate: CandidateMini): AutomationInsight[] {
     insights.push({
       id: "stand-by",
       title: "Process paused",
-      description:
-        "Candidate is currently on stand by. Aging should be treated differently while the position or process is paused.",
-      severity: "warning",
-      icon: "pause",
-    });
-  }
-
-  if (
-    candidate.processStatus === "hired" ||
-    candidate.talentType === "trick_internal"
-  ) {
-    insights.push({
-      id: "trick-internal",
-      title: "Moved to Trick Internal",
-      description:
-        "Candidate is hired or already marked as Trick Internal. Recruiting process metrics should remain preserved.",
-      severity: "success",
-      icon: "user",
-    });
-  }
-
-  if (
-    candidate.processStatus === "contacted" &&
-    candidate.resumeStatus === "none"
-  ) {
-    insights.push({
-      id: "early-stage",
-      title: "Early-stage candidate",
-      description:
-        "Candidate was contacted but has not moved to screening or resume preparation yet.",
+      description: "The candidate is on stand by. Aging is treated differently while paused.",
       severity: "info",
-      icon: "zap",
+      icon: "pause",
     });
   }
 
@@ -483,6 +488,10 @@ function AutomationIcon({ icon }: { icon: AutomationInsight["icon"] }) {
 function automationInsightClassName(severity: AutomationInsight["severity"]) {
   if (severity === "success") {
     return "border-emerald-400 bg-emerald-100 text-zinc-950 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-100";
+  }
+
+  if (severity === "danger") {
+    return "border-red-400 bg-red-100 text-zinc-950 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-100";
   }
 
   if (severity === "warning") {
@@ -657,19 +666,22 @@ function buildBaseActivities(
 type QuickActionOption = {
   id: QuickActionId;
   label: string;
+  disabled?: boolean;
+  hint?: string;
 };
 
 function getQuickActionOptions(
   mode: "project" | "position" | "candidate",
   candidate: CandidateMini | null,
-  position: PositionCardType | null
+  position: PositionCardType | null,
+  project: ProjectColumnType
 ): QuickActionOption[] {
   if (mode === "candidate" && candidate) {
     return [
       { id: "change_candidate_status", label: "Change candidate status" },
-      { id: "assign_recruiter", label: "Assign recruiter" },
-      { id: "mark_resume_ready", label: "Mark resume ready" },
-      { id: "move_to_trick_internal", label: "Move to Trick Internal" },
+      { id: "log_contact", label: "Log contact" },
+      { id: "record_tech_interview", label: "Record tech interview result" },
+      { id: "add_recruiter", label: "Add recruiter" },
     ];
   }
 
@@ -677,17 +689,34 @@ function getQuickActionOptions(
     return [
       { id: "change_position_status", label: "Change position status" },
       { id: "assign_internal_member", label: "Assign internal member" },
-      { id: "request_more_candidates", label: "Request more candidates" },
-      { id: "mark_jd_reviewed", label: "Mark JD as reviewed" },
+      {
+        id: "request_more_candidates",
+        label: position.moreCandidatesRequestedAt
+          ? "Cancel candidate request"
+          : "Request more candidates",
+      },
+      {
+        id: "mark_jd_reviewed",
+        label: position.jdReviewedAt ? "Mark JD as pending" : "Mark JD as reviewed",
+      },
     ];
   }
+
+  const canArchive = project.status === "active_no_search";
 
   return [
     { id: "update_project_priority", label: "Update project priority" },
     { id: "add_project_member", label: "Add project member" },
-    { id: "mark_as_confidential", label: "Mark as confidential" },
-    { id: "request_client_follow_up", label: "Request client follow-up" },
-    { id: "archive_project", label: "Archive project" },
+    {
+      id: "mark_as_confidential",
+      label: project.confidential ? "Set as public" : "Set as confidential",
+    },
+    {
+      id: "archive_project",
+      label: "Archive project",
+      disabled: !canArchive,
+      hint: canArchive ? undefined : "Available when the project has no open searches",
+    },
   ];
 }
 
@@ -719,7 +748,7 @@ const priorityLabel: Record<ProjectPriority, string> = {
   low: "Low",
 };
 
-const OWNER_OPTIONS = ["Ana", "Germán", "Sofía"];
+const OWNER_OPTIONS = INTERNAL_USERS;
 
 const SMALL_BUTTON_CLASS =
   "inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-semibold app-border app-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.06]";
@@ -959,6 +988,7 @@ export function ResourcePlanningDetailModal({
   onProjectArchive,
   onAddPosition,
   onAddCandidate,
+  allProjects,
 }: Props) {
   const [selectedPosition, setSelectedPosition] =
     useState<PositionCardType | null>(initialPosition);
@@ -974,6 +1004,16 @@ export function ResourcePlanningDetailModal({
 
   const [projectOverrides, setProjectOverrides] =
     useState<ProjectOverrides>({});
+
+  const [candidateDialog, setCandidateDialog] = useState<
+    "hire" | "contact" | "tech" | null
+  >(null);
+  const [statusMenuSignal, setStatusMenuSignal] = useState(0);
+  // Estado al que se quiere mover el candidato: abre el diálogo de requisitos
+  const [stageTarget, setStageTarget] = useState<CandidateProcessStatus | null>(null);
+  const [techOpenSignal, setTechOpenSignal] = useState(0);
+  const { user: currentUser, role: currentRole } = useCurrentUser();
+  const [recruiterFocusSignal, setRecruiterFocusSignal] = useState(0);
 
   useEffect(() => {
     setSelectedPosition(initialPosition);
@@ -998,7 +1038,7 @@ export function ResourcePlanningDetailModal({
     : null;
 
   const effectiveSelectedCandidate = liveCandidate
-    ? applyCandidateOverride(liveCandidate, candidateOverrides)
+    ? applyCandidateOverride(liveCandidate, candidateOverrides, livePosition?.id)
     : null;
 
   const isCandidateView = Boolean(effectiveSelectedCandidate);
@@ -1051,13 +1091,13 @@ export function ResourcePlanningDetailModal({
   ) => {
     setCandidateOverrides((currentOverrides) => ({
       ...currentOverrides,
-      [candidateId]: {
-        ...currentOverrides[candidateId],
+      [`${effectiveSelectedPosition?.id ?? ""}:${candidateId}`]: {
+        ...currentOverrides[`${effectiveSelectedPosition?.id ?? ""}:${candidateId}`],
         ...override,
       },
     }));
 
-    onCandidateUpdate?.(candidateId, override);
+    onCandidateUpdate?.(candidateId, override, effectiveSelectedPosition?.id);
   };
 
   const updatePositionOverride = (
@@ -1135,14 +1175,43 @@ export function ResourcePlanningDetailModal({
     }
 
     if (actionId === "request_more_candidates" && effectiveSelectedPosition) {
+      const wasRequested = Boolean(effectiveSelectedPosition.moreCandidatesRequestedAt);
+      const nextValue = wasRequested ? undefined : new Date().toISOString().slice(0, 10);
+
+      updatePositionOverride(effectiveSelectedPosition.id, {
+        moreCandidatesRequestedAt: nextValue,
+      });
+
       return {
-        activityText: `Requested more candidates for ${effectiveSelectedPosition.title}.`,
+        activityText: wasRequested
+          ? `Cancelled the request for more candidates for ${effectiveSelectedPosition.title}.`
+          : `Requested more candidates for ${effectiveSelectedPosition.title}.`,
+        nextPosition: {
+          ...effectiveSelectedPosition,
+          moreCandidatesRequestedAt: nextValue,
+        },
       };
     }
 
     if (actionId === "mark_jd_reviewed" && effectiveSelectedPosition) {
+      const wasReviewed = Boolean(effectiveSelectedPosition.jdReviewedAt);
+      const reviewedAt = wasReviewed ? undefined : new Date().toISOString().slice(0, 10);
+      const reviewedBy = wasReviewed ? undefined : "Germán";
+
+      updatePositionOverride(effectiveSelectedPosition.id, {
+        jdReviewedAt: reviewedAt,
+        jdReviewedBy: reviewedBy,
+      });
+
       return {
-        activityText: `Marked JD as reviewed for ${effectiveSelectedPosition.title}.`,
+        activityText: wasReviewed
+          ? `Marked the JD as pending for ${effectiveSelectedPosition.title}.`
+          : `Marked the JD as reviewed for ${effectiveSelectedPosition.title}.`,
+        nextPosition: {
+          ...effectiveSelectedPosition,
+          jdReviewedAt: reviewedAt,
+          jdReviewedBy: reviewedBy,
+        },
       };
     }
 
@@ -1181,14 +1250,24 @@ export function ResourcePlanningDetailModal({
     }
 
     if (actionId === "add_project_member") {
-      return {
-        activityText: "Added project member locally.",
-      };
-    }
+      const members = effectiveProject.members ?? [];
 
-    if (actionId === "request_client_follow_up") {
+      if (members.includes("Germán")) {
+        return {
+          activityText: "Germán is already a member of this project.",
+        };
+      }
+
+      const nextMembers = [...members, "Germán"];
+
+      updateProjectOverride(effectiveProject.id, { members: nextMembers });
+
       return {
-        activityText: "Requested client follow-up.",
+        activityText: "Added Germán as a project member.",
+        nextProject: {
+          ...effectiveProject,
+          members: nextMembers,
+        },
       };
     }
 
@@ -1213,70 +1292,29 @@ export function ResourcePlanningDetailModal({
       };
     }
 
-    const candidateId = effectiveSelectedCandidate.id;
-
+    // Las acciones del candidato abren menús o diálogos: el cambio se registra al confirmarlos.
     if (actionId === "change_candidate_status") {
-      const nextStatus = getNextProcessStatus(
-        effectiveSelectedCandidate.processStatus
-      );
+      setStatusMenuSignal((current) => current + 1);
 
-      updateCandidateOverride(candidateId, {
-        processStatus: nextStatus,
-      });
-
-      return {
-        activityText: `Changed candidate status to ${
-          processStatusConfig[nextStatus].label
-        }.`,
-        nextCandidate: {
-          ...effectiveSelectedCandidate,
-          processStatus: nextStatus,
-        },
-      };
+      return { activityText: "" };
     }
 
-    if (actionId === "assign_recruiter") {
-      updateCandidateOverride(candidateId, {
-        recruiterOwner: "Germán",
-      });
+    if (actionId === "log_contact") {
+      setCandidateDialog("contact");
 
-      return {
-        activityText: "Assigned recruiter owner to Germán.",
-        nextCandidate: {
-          ...effectiveSelectedCandidate,
-          recruiterOwner: "Germán",
-        },
-      };
+      return { activityText: "" };
     }
 
-    if (actionId === "mark_resume_ready") {
-      updateCandidateOverride(candidateId, {
-        resumeStatus: "resume_ready",
-      });
+    if (actionId === "record_tech_interview") {
+      setTechOpenSignal((current) => current + 1);
 
-      return {
-        activityText: "Marked resume as ready.",
-        nextCandidate: {
-          ...effectiveSelectedCandidate,
-          resumeStatus: "resume_ready",
-        },
-      };
+      return { activityText: "" };
     }
 
-    if (actionId === "move_to_trick_internal") {
-      updateCandidateOverride(candidateId, {
-        talentType: "trick_internal",
-        processStatus: "hired",
-      });
+    if (actionId === "add_recruiter") {
+      setRecruiterFocusSignal((current) => current + 1);
 
-      return {
-        activityText: "Moved candidate to Trick Internal and marked as hired.",
-        nextCandidate: {
-          ...effectiveSelectedCandidate,
-          talentType: "trick_internal",
-          processStatus: "hired",
-        },
-      };
+      return { activityText: "" };
     }
 
     return {
@@ -1320,8 +1358,8 @@ export function ResourcePlanningDetailModal({
   const addActivity = (text: string, type: LocalActivity["type"]) => {
     const nextActivity: LocalActivity = {
       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      initials: "GA",
-      author: "Germán",
+      initials: getUserInitials(currentUser) || "GA",
+      author: currentUser,
       text,
       createdAt: new Date().toISOString(),
       meta:
@@ -1365,10 +1403,66 @@ export function ResourcePlanningDetailModal({
     );
   };
 
+  // Cambios del candidato (etiquetas, adjuntos, recruiters, diálogos): se guardan,
+  // se anotan en la línea de tiempo y se registran en la actividad.
+  const applyCandidateChange: CandidateChange = (
+    updates,
+    activityText,
+    timelineEntry
+  ) => {
+    if (!effectiveSelectedCandidate) {
+      return;
+    }
+
+    const timeline = timelineEntry
+      ? [
+          ...(effectiveSelectedCandidate.timeline ?? []),
+          {
+            id: `timeline-${makeId()}`,
+            title: timelineEntry.title,
+            description: timelineEntry.description,
+            date: todayIso(),
+            author: currentUser,
+          },
+        ]
+      : undefined;
+
+    updateCandidateOverride(
+      effectiveSelectedCandidate.id,
+      timeline ? { ...updates, timeline } : updates
+    );
+    addActivity(activityText, "action");
+  };
+
+  // Confirmación del diálogo de requisitos: guarda el cambio y deja el comentario automático
+  const confirmStageMove = (input: StageMoveInput) => {
+    if (!effectiveSelectedCandidate || !stageTarget) {
+      return;
+    }
+
+    const change = buildStageChange({
+      candidate: effectiveSelectedCandidate,
+      project: effectiveProject,
+      to: stageTarget,
+      input,
+      author: currentUser,
+    });
+
+    if (change.techInterviewToSave) {
+      addTechInterview(effectiveSelectedCandidate.id, change.techInterviewToSave);
+    }
+
+    updateCandidateOverride(effectiveSelectedCandidate.id, change.updates);
+    addActivity(change.commentText, "comment");
+    setStageTarget(null);
+  };
+
   const handleQuickActionClick = (actionId: QuickActionId) => {
     const result = handleQuickAction(actionId);
 
-    addActivity(result.activityText, "action");
+    if (result.activityText) {
+      addActivity(result.activityText, "action");
+    }
 
     if (result.nextCandidate) {
       setSelectedCandidate(result.nextCandidate);
@@ -1418,7 +1512,8 @@ export function ResourcePlanningDetailModal({
   const quickActionOptions = getQuickActionOptions(
     mode,
     effectiveSelectedCandidate,
-    effectiveSelectedPosition
+    effectiveSelectedPosition,
+    effectiveProject
   );
 
   const visibleActivities = [
@@ -1482,15 +1577,22 @@ export function ResourcePlanningDetailModal({
                   />
 
                   <h2 className="text-2xl font-semibold app-text-primary">
-                    {effectiveSelectedCandidate.name} -{" "}
-                    {effectiveSelectedPosition.title} /{" "}
-                    {effectiveSelectedPosition.seniority}
+                    {effectiveSelectedCandidate.name} ·{" "}
+                    {effectiveSelectedPosition.title} ·{" "}
+                    {effectiveSelectedCandidate.seniority ??
+                      normalizeSeniority(effectiveSelectedPosition.seniority) ??
+                      effectiveSelectedPosition.seniority}
                   </h2>
 
-                  <p className="mt-1 text-sm app-text-secondary">
-                    {effectiveSelectedCandidate.location} · Candidate ID:{" "}
-                    {effectiveSelectedCandidate.id}
-                  </p>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-3 text-sm app-text-secondary">
+                    <span>{effectiveSelectedCandidate.location}</span>
+
+                    <RecruitersGroup
+                      candidate={effectiveSelectedCandidate}
+                      focusSignal={recruiterFocusSignal}
+                      onChange={applyCandidateChange}
+                    />
+                  </div>
                 </>
               ) : isPositionView && effectiveSelectedPosition ? (
                 <>
@@ -1563,13 +1665,6 @@ export function ResourcePlanningDetailModal({
                 />
               )}
 
-              <button
-                className="rounded-xl border p-2 transition app-border app-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
-                aria-label="Attachments"
-              >
-                <Paperclip className="h-4 w-4" />
-              </button>
-
               {isCandidateView && (
                 <button
                   onClick={handleCopyLink}
@@ -1596,9 +1691,21 @@ export function ResourcePlanningDetailModal({
             </div>
           </div>
 
-          {isCandidateView && effectiveSelectedCandidate && (
-            <CandidateHeaderSummary candidate={effectiveSelectedCandidate} />
-          )}
+          {isCandidateView &&
+            effectiveSelectedCandidate &&
+            effectiveSelectedPosition && (
+              <CandidateHeaderSummary
+                candidate={effectiveSelectedCandidate}
+                position={effectiveSelectedPosition}
+                ndaApplies={
+                  effectiveProject.confidential && effectiveProject.ndaRequired !== false
+                }
+                clientName={effectiveProject.clientName}
+                statusMenuSignal={statusMenuSignal}
+                onChange={applyCandidateChange}
+                onRequestStage={setStageTarget}
+              />
+            )}
 
           {isPositionView && effectiveSelectedPosition && (
             <PositionHeaderSummary
@@ -1639,7 +1746,14 @@ export function ResourcePlanningDetailModal({
             {isCandidateView &&
               effectiveSelectedCandidate &&
               effectiveSelectedPosition && (
-                <CandidateDetailContent candidate={effectiveSelectedCandidate} />
+                <CandidateDetailContent
+                  candidate={effectiveSelectedCandidate}
+                  position={effectiveSelectedPosition}
+                  project={effectiveProject}
+                  allProjects={allProjects ?? [project]}
+                  techOpenSignal={techOpenSignal}
+                  onChange={applyCandidateChange}
+                />
               )}
           </main>
 
@@ -1652,6 +1766,31 @@ export function ResourcePlanningDetailModal({
             />
           </aside>
         </div>
+
+        {candidateDialog &&
+          effectiveSelectedCandidate &&
+          effectiveSelectedPosition && (
+            <CandidateDialogs
+              kind={candidateDialog}
+              candidate={effectiveSelectedCandidate}
+              position={effectiveSelectedPosition}
+              onClose={() => setCandidateDialog(null)}
+              onChange={applyCandidateChange}
+            />
+          )}
+
+        {stageTarget && effectiveSelectedCandidate && effectiveSelectedPosition && (
+          <StageTransitionDialog
+            candidate={effectiveSelectedCandidate}
+            project={effectiveProject}
+            position={effectiveSelectedPosition}
+            to={stageTarget}
+            user={currentUser}
+            role={currentRole}
+            onCancel={() => setStageTarget(null)}
+            onConfirm={confirmStageMove}
+          />
+        )}
       </article>
     </div>
   );
@@ -1769,8 +1908,20 @@ function NavigationControls({
   );
 }
 
-function RpChip({ tone, children }: { tone: ChipTone; children: ReactNode }) {
-  return <span className={`rp-chip rp-chip-${tone}`}>{children}</span>;
+function RpChip({
+  tone,
+  title,
+  children,
+}: {
+  tone: ChipTone;
+  title?: string;
+  children: ReactNode;
+}) {
+  return (
+    <span title={title} className={`rp-chip rp-chip-${tone}`}>
+      {children}
+    </span>
+  );
 }
 
 function InsightsGrid({
@@ -1900,6 +2051,32 @@ function PositionHeaderSummary({
           <Users aria-hidden="true" />
           {hired} / {quantity} hired
         </RpChip>
+
+        {position.moreCandidatesRequestedAt && (
+          <RpChip tone="amber">
+            <Flag aria-hidden="true" />
+            More candidates requested · {position.moreCandidatesRequestedAt}
+          </RpChip>
+        )}
+
+        {position.jdReviewedAt && (
+          <RpChip tone="green">
+            <CheckCircle2 aria-hidden="true" />
+            JD reviewed · {position.jdReviewedBy ?? "Someone"} · {position.jdReviewedAt}
+          </RpChip>
+        )}
+
+        <RpChip tone="blue">
+          <CalendarDays aria-hidden="true" />
+          Target: {formatPositionTarget(position.target)}
+        </RpChip>
+
+        {position.openedAt && (
+          <RpChip tone="gray" title={`Opened on ${position.openedAt}`}>
+            <Clock3 aria-hidden="true" />
+            Open for {daysSince(position.openedAt) ?? 0} days
+          </RpChip>
+        )}
       </div>
 
       <InsightsGrid
@@ -2109,6 +2286,7 @@ function RichTextEditor({
         data-placeholder={placeholder}
         spellCheck={false}
         onInput={persistContent}
+        onPaste={handleRichPaste}
         className="rp-notes-editor min-h-[130px] px-4 py-3 text-sm leading-6 outline-none app-text-primary"
       />
     </div>
@@ -2143,6 +2321,26 @@ function ProjectDetailContent({
   const links = info.links ?? [];
   const files = info.files ?? [];
   const canArchive = project.status === "active_no_search";
+  const coverInputRef = useRef<HTMLInputElement>(null);
+
+  // El responsable ahora vive en el proyecto (info.owner es el valor guardado antes)
+  const owner = project.owner ?? info.owner ?? "";
+  const members = project.members ?? [];
+  const availableMembers = OWNER_OPTIONS.filter((user) => !members.includes(user));
+
+  const handleCoverFile = async (file: File | undefined) => {
+    if (!file) {
+      return;
+    }
+
+    try {
+      const cover = await fileToCoverDataUrl(file);
+
+      onProjectChange({ cover }, "Changed the project cover.");
+    } catch {
+      // Si el archivo no es una imagen válida, se ignora.
+    }
+  };
 
   const addLink = () => {
     const url = linkUrl.trim();
@@ -2173,10 +2371,21 @@ function ProjectDetailContent({
 
           <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-transparent" />
 
+          <input
+            ref={coverInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(event) => {
+              void handleCoverFile(event.target.files?.[0]);
+              event.target.value = "";
+            }}
+          />
+
           <button
             type="button"
-            title="Available when the backend is connected"
-            className="absolute right-3 top-3 inline-flex items-center gap-2 rounded-xl border border-white/25 bg-black/45 px-3 py-1.5 text-xs font-semibold text-white"
+            onClick={() => coverInputRef.current?.click()}
+            className="absolute right-3 top-3 inline-flex items-center gap-2 rounded-xl border border-white/25 bg-black/45 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-black/60"
           >
             <ImageIcon className="h-3.5 w-3.5" />
             Change cover
@@ -2268,25 +2477,102 @@ function ProjectDetailContent({
             </select>
           </PersonalInfoRow>
 
-          <PersonalInfoRow icon={<UserRound />} label="Delivery owner">
-            <select
-              className="rp-select"
-              value={info.owner ?? ""}
-              onChange={(event) => {
-                setInfo({ ...info, owner: event.target.value });
+          {project.confidential && (
+            <PersonalInfoRow icon={<FileText />} label="NDA required">
+              <select
+                className="rp-select"
+                value={project.ndaRequired === false ? "no" : "yes"}
+                onChange={(event) => {
+                  const required = event.target.value === "yes";
 
-                if (event.target.value) {
-                  onLogActivity(`Assigned delivery owner to ${event.target.value}.`);
+                  onProjectChange(
+                    { ndaRequired: required },
+                    required
+                      ? "Set the NDA as required before technical tests."
+                      : "Set the NDA as not required."
+                  );
+                }}
+              >
+                <option value="yes">Yes, before technical tests</option>
+                <option value="no">No</option>
+              </select>
+            </PersonalInfoRow>
+          )}
+
+          <PersonalInfoRow icon={<UserRound />} label="Delivery owner">
+            <div className="flex items-center justify-end gap-2">
+              <UserAvatar name={owner || undefined} />
+
+              <select
+                className="rp-select"
+                value={owner}
+                onChange={(event) =>
+                  onProjectChange(
+                    { owner: event.target.value },
+                    event.target.value
+                      ? `Assigned delivery owner to ${event.target.value}.`
+                      : "Removed the delivery owner."
+                  )
                 }
-              }}
-            >
-              <option value="">Not assigned</option>
-              {OWNER_OPTIONS.map((owner) => (
-                <option key={owner} value={owner}>
-                  {owner}
-                </option>
+              >
+                <option value="">Not assigned</option>
+                {OWNER_OPTIONS.map((user) => (
+                  <option key={user} value={user}>
+                    {user}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </PersonalInfoRow>
+
+          <PersonalInfoRow icon={<Users />} label="Members">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {members.map((member) => (
+                <span
+                  key={member}
+                  className="inline-flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-2 text-xs app-border"
+                >
+                  <UserAvatar name={member} />
+                  {member}
+
+                  <button
+                    type="button"
+                    aria-label={`Remove ${member}`}
+                    onClick={() =>
+                      onProjectChange(
+                        { members: members.filter((item) => item !== member) },
+                        `Removed ${member} from the project members.`
+                      )
+                    }
+                    className="app-text-muted hover:opacity-80"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
               ))}
-            </select>
+
+              {availableMembers.length > 0 && (
+                <select
+                  className="rp-select"
+                  value=""
+                  onChange={(event) => {
+                    if (event.target.value) {
+                      onProjectChange(
+                        { members: [...members, event.target.value] },
+                        `Added ${event.target.value} as a project member.`
+                      );
+                    }
+                  }}
+                >
+                  <option value="">＋ Add member</option>
+                  {availableMembers.map((user) => (
+                    <option key={user} value={user}>
+                      {user}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
           </PersonalInfoRow>
 
           <PersonalInfoRow icon={<BriefcaseBusiness />} label="Client">
@@ -2502,6 +2788,11 @@ function PositionDetailContent({
   onAddCandidate,
 }: PositionDetailContentProps) {
   const stats = getPositionStats(position);
+  const [showHired, setShowHired] = useState(false);
+  const hiredCandidates = position.candidates.filter(isHiredCandidate);
+  const activeCandidates = position.candidates.filter(
+    (candidate) => !isHiredCandidate(candidate)
+  );
   const jdKey = `rp-jd:project:${project.id}:position:${position.id}`;
   const [jdFiles, setJdFiles] = useStoredState<ResourceFile[]>(`${jdKey}:files`, []);
 
@@ -2602,6 +2893,26 @@ function PositionDetailContent({
             {stats.hired} of {stats.quantity} filled
           </PersonalInfoRow>
 
+          <PersonalInfoRow icon={<Clock3 />} label="Opened">
+            {position.openedAt ? (
+              `${position.openedAt} · ${daysSince(position.openedAt) ?? 0} days open`
+            ) : (
+              <NotDefined />
+            )}
+          </PersonalInfoRow>
+
+          <PersonalInfoRow icon={<CalendarDays />} label="Target">
+            <PositionTargetField
+              value={position.target}
+              onChange={(target) =>
+                onPositionChange(
+                  { target },
+                  `Set the target to ${formatPositionTarget(target)}.`
+                )
+              }
+            />
+          </PersonalInfoRow>
+
           <PersonalInfoRow icon={<BriefcaseBusiness />} label="Client / Project">
             {project.clientName} · {project.projectName}
           </PersonalInfoRow>
@@ -2626,8 +2937,8 @@ function PositionDetailContent({
         </SectionLabel>
 
         <div className="grid gap-3 md:grid-cols-2">
-          {position.candidates.length > 0 ? (
-            position.candidates.map((candidate) => (
+          {activeCandidates.length > 0 ? (
+            activeCandidates.map((candidate) => (
               <CandidateMiniCard
                 key={candidate.id}
                 candidate={candidate}
@@ -2636,10 +2947,41 @@ function PositionDetailContent({
             ))
           ) : (
             <div className="rounded-xl border border-dashed px-3 py-5 text-center text-sm app-border app-text-muted md:col-span-2">
-              No candidates linked yet.
+              {hiredCandidates.length > 0
+                ? "No active candidates."
+                : "No candidates linked yet."}
             </div>
           )}
         </div>
+
+        {hiredCandidates.length > 0 && (
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={() => setShowHired((current) => !current)}
+              className="flex items-center gap-1.5 rounded-xl border border-dashed px-3 py-2 text-xs font-medium transition app-border app-text-secondary hover:border-emerald-500/50"
+            >
+              <ChevronDown
+                className={`h-3.5 w-3.5 transition-transform ${
+                  showHired ? "rotate-180" : "-rotate-90"
+                }`}
+              />
+              Hired ({hiredCandidates.length})
+            </button>
+
+            {showHired && (
+              <div className="mt-2 grid gap-3 md:grid-cols-2">
+                {hiredCandidates.map((candidate) => (
+                  <CandidateMiniCard
+                    key={candidate.id}
+                    candidate={candidate}
+                    onClick={() => onCandidateClick(candidate)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </section>
     </div>
   );
@@ -2748,13 +3090,22 @@ function QuickActionsMenu({ options, onAction }: QuickActionsMenuProps) {
             <button
               key={option.id}
               role="menuitem"
+              disabled={option.disabled}
               onClick={() => {
                 setOpen(false);
                 onAction(option.id);
               }}
-              className="rp-menu-item block w-full rounded-lg px-3 py-2 text-left text-sm font-medium app-text-primary"
+              className={`rp-menu-item block w-full rounded-lg px-3 py-2 text-left text-sm font-medium app-text-primary ${
+                option.disabled ? "cursor-not-allowed opacity-50" : ""
+              }`}
             >
               {option.label}
+
+              {option.hint && (
+                <span className="mt-0.5 block text-xs font-normal app-text-muted">
+                  {option.hint}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -2779,6 +3130,7 @@ function RpDetailStyles() {
         line-height: 1;
       }
       .rp-chip svg { width: 18px; height: 18px; flex-shrink: 0; }
+      .rp-chip-dashed { border-style: dashed; }
       .rp-chip-violet { background: rgba(124,58,237,.10); border-color: rgba(124,58,237,.35); color: #6d28d9; }
       .rp-chip-green  { background: rgba(34,197,94,.12);  border-color: rgba(34,197,94,.40);  color: #15803d; }
       .rp-chip-blue   { background: rgba(59,130,246,.10); border-color: rgba(59,130,246,.35); color: #1d4ed8; }
@@ -2854,101 +3206,846 @@ function RpDetailStyles() {
   );
 }
 
-function CandidateHeaderSummary({ candidate }: { candidate: CandidateMini }) {
-  const processStatus = processStatusConfig[candidate.processStatus];
-  const resumeStatus = resumeStatusConfig[candidate.resumeStatus];
-  const talentType = talentTypeConfig[candidate.talentType];
-  const automationInsights = getAutomationInsights(candidate);
+const NDA_LABELS: Record<NdaStatus, string> = {
+  required: "NDA required",
+  sent: "NDA sent",
+  signed: "NDA signed",
+};
 
-  const resumeTone =
-    candidate.resumeStatus === "resume_ready"
-      ? "green"
-      : candidate.resumeStatus === "wip_resume"
-        ? "amber"
-        : "gray";
+type CandidateChange = (
+  updates: Partial<CandidateMini>,
+  activityText: string,
+  timelineEntry?: { title: string; description: string }
+) => void;
 
-  const talentTone =
-    candidate.talentType === "external"
-      ? "blue"
-      : candidate.talentType === "internal_candidate"
-        ? "violet"
-        : "amber";
+type ChipOption = { value: string; label: string; current?: boolean };
+type ChipSection = { heading?: string; options: ChipOption[] };
 
-  const daysTone =
-    typeof candidate.daysInProcess === "number" && candidate.daysInProcess >= 14
-      ? "red"
-      : "amber";
+// Etiqueta que se puede tocar para cambiar su valor desde un menú
+function ChipDropdown({
+  tone,
+  dashed = false,
+  title,
+  children,
+  sections,
+  onSelect,
+  openSignal = 0,
+}: {
+  tone: ChipTone;
+  dashed?: boolean;
+  title?: string;
+  children: ReactNode;
+  sections: ChipSection[];
+  onSelect: (value: string) => void;
+  openSignal?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  const ResumeIcon =
-    candidate.resumeStatus === "resume_ready"
-      ? CheckCircle2
-      : candidate.resumeStatus === "wip_resume"
-        ? Clock3
-        : FileText;
+  useEffect(() => {
+    if (openSignal > 0) {
+      setOpen(true);
+    }
+  }, [openSignal]);
 
-  const TalentIcon = candidate.talentType === "external" ? Globe : UserCheck;
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        title={title}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        className={`rp-chip rp-chip-${tone} ${dashed ? "rp-chip-dashed" : ""} cursor-pointer`}
+      >
+        {children}
+        <ChevronDown style={{ width: 14, height: 14 }} className="opacity-70" />
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute left-0 top-full z-50 mt-2 min-w-[240px] rounded-xl border p-1.5 shadow-xl app-border app-card"
+        >
+          {sections.map((section, index) => (
+            <div key={section.heading ?? index}>
+              {index > 0 && (
+                <div
+                  className="mx-1 my-1.5 h-px"
+                  style={{ backgroundColor: "var(--app-border)" }}
+                />
+              )}
+
+              {section.heading && (
+                <p className="px-2.5 pb-1 pt-1.5 text-[10.5px] font-semibold uppercase tracking-wide app-text-muted">
+                  {section.heading}
+                </p>
+              )}
+
+              {section.options.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={Boolean(option.current)}
+                  onClick={() => {
+                    setOpen(false);
+                    onSelect(option.value);
+                  }}
+                  className="rp-menu-item flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm app-text-primary"
+                >
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full border"
+                    style={{
+                      borderColor: option.current ? "#8b5cf6" : "var(--app-text-muted)",
+                      backgroundColor: option.current ? "#8b5cf6" : "transparent",
+                    }}
+                  />
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Recruiter owner (siempre uno) y recruiters adicionales
+function RecruitersGroup({
+  candidate,
+  focusSignal,
+  onChange,
+}: {
+  candidate: CandidateMini;
+  focusSignal: number;
+  onChange: CandidateChange;
+}) {
+  const owner = candidate.recruiterOwner;
+  const coRecruiters = candidate.coRecruiters ?? [];
+  const available = INTERNAL_USERS.filter(
+    (user) => user !== owner && !coRecruiters.includes(user)
+  );
+  const selectRef = useRef<HTMLSelectElement>(null);
+
+  useEffect(() => {
+    if (focusSignal > 0) {
+      selectRef.current?.focus();
+    }
+  }, [focusSignal]);
+
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      {owner ? (
+        <span className="inline-flex items-center gap-2 rounded-full border py-0.5 pl-1 pr-3 text-xs app-border">
+          <UserAvatar name={owner} />
+          {owner}
+          <span className="text-[9.5px] font-bold uppercase tracking-wide text-violet-500">
+            Owner
+          </span>
+        </span>
+      ) : (
+        <select
+          ref={selectRef}
+          className="rp-select"
+          value=""
+          onChange={(event) => {
+            if (event.target.value) {
+              onChange(
+                { recruiterOwner: event.target.value },
+                `Assigned ${event.target.value} as recruiter owner.`,
+                {
+                  title: "Recruiter owner assigned",
+                  description: `${event.target.value} is now the recruiter owner.`,
+                }
+              );
+            }
+          }}
+        >
+          <option value="">Assign owner</option>
+          {INTERNAL_USERS.map((user) => (
+            <option key={user} value={user}>
+              {user}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {coRecruiters.map((recruiter) => (
+        <span
+          key={recruiter}
+          className="inline-flex items-center gap-1.5 rounded-full border py-0.5 pl-1 pr-2 text-xs app-border"
+        >
+          <UserAvatar name={recruiter} />
+          {recruiter}
+
+          <button
+            type="button"
+            aria-label={`Remove ${recruiter}`}
+            onClick={() =>
+              onChange(
+                { coRecruiters: coRecruiters.filter((item) => item !== recruiter) },
+                `Removed ${recruiter} from the recruiters.`,
+                {
+                  title: "Recruiter removed",
+                  description: `${recruiter} was removed as recruiter.`,
+                }
+              )
+            }
+            className="app-text-muted hover:opacity-80"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </span>
+      ))}
+
+      {owner && available.length > 0 && (
+        <select
+          ref={selectRef}
+          className="rp-select"
+          value=""
+          onChange={(event) => {
+            if (event.target.value) {
+              onChange(
+                { coRecruiters: [...coRecruiters, event.target.value] },
+                `Added ${event.target.value} as a recruiter.`,
+                {
+                  title: "Recruiter added",
+                  description: `${event.target.value} was added as recruiter.`,
+                }
+              );
+            }
+          }}
+        >
+          <option value="">＋ Add recruiter</option>
+          {available.map((user) => (
+            <option key={user} value={user}>
+              {user}
+            </option>
+          ))}
+        </select>
+      )}
+    </span>
+  );
+}
+
+function CandidateHeaderSummary({
+  candidate,
+  position,
+  ndaApplies,
+  clientName,
+  statusMenuSignal,
+  onChange,
+  onRequestStage,
+}: {
+  candidate: CandidateMini;
+  position: PositionCardType;
+  ndaApplies: boolean;
+  clientName: string;
+  statusMenuSignal: number;
+  onChange: CandidateChange;
+  onRequestStage: (next: CandidateProcessStatus) => void;
+}) {
+  const status = PROCESS_STATUS_INFO[candidate.processStatus];
+  const resume = RESUME_STATUS_INFO[candidate.resumeStatus];
+  const seniority =
+    candidate.seniority ??
+    normalizeSeniority(position.seniority) ??
+    position.seniority;
+  const validated = Boolean(candidate.seniorityValidated);
+  const daysInProcess = getDaysInProcess(candidate);
+  const daysSinceContact = getDaysSinceContact(candidate);
+  const active = isInProcessCandidate(candidate);
+  const insights = getCandidateInsights(candidate, position, ndaApplies);
+  const stageDays = getDaysInCurrentStage(candidate);
+  const nda = candidate.ndaStatus ?? "required";
+  const hireMetrics = getHireMetrics(candidate, position);
+
+  const selectStatus = (value: string) => {
+    const next = value as CandidateProcessStatus;
+
+    if (next === candidate.processStatus) {
+      return;
+    }
+
+    // Todo cambio de etapa pasa por el diálogo de requisitos
+    onRequestStage(next);
+  };
+
+  const selectResume = (value: string) => {
+    const next = value as CandidateResumeStatus;
+
+    if (next === candidate.resumeStatus) {
+      return;
+    }
+
+    const label = RESUME_STATUS_INFO[next].label;
+
+    onChange({ resumeStatus: next }, `Changed resume status to ${label}.`, {
+      title: "Resume status",
+      description: `Resume set to ${label}.`,
+    });
+  };
+
+  const selectSeniority = (value: string) => {
+    if (value === seniority && !candidate.seniorityValidated) {
+      return;
+    }
+
+    onChange(
+      { seniority: value, seniorityValidated: false },
+      `Set seniority to ${value}.`,
+      {
+        title: "Seniority changed",
+        description: `Seniority set to ${value} (manual change).`,
+      }
+    );
+  };
 
   return (
     <div className="mt-4 space-y-4">
-      <div className="flex flex-wrap items-center gap-3 md:flex-nowrap md:overflow-x-auto">
-        <span className="rp-chip rp-chip-violet">
+      <div className="flex flex-wrap items-center gap-3">
+        <ChipDropdown
+          tone={status.tone}
+          openSignal={statusMenuSignal}
+          onSelect={selectStatus}
+          sections={[
+            {
+              heading: "Pipeline",
+              options: PROCESS_FLOW.map((item) => ({
+                value: item.value,
+                label: item.label,
+                current: item.value === candidate.processStatus,
+              })),
+            },
+            {
+              heading: "Outcome",
+              options: PROCESS_OUTCOMES.map((item) => ({
+                value: item.value,
+                label: item.label,
+                current: item.value === candidate.processStatus,
+              })),
+            },
+          ]}
+        >
           <FlaskConical aria-hidden="true" />
-          {processStatus.label}
-        </span>
+          {status.label}
+          {candidate.hiredAt && candidate.processStatus === "hired"
+            ? ` · ${candidate.hiredAt}`
+            : ""}
+        </ChipDropdown>
 
-        <span className={`rp-chip rp-chip-${resumeTone}`}>
-          <ResumeIcon aria-hidden="true" />
-          {resumeStatus.label}
-        </span>
+        <ChipDropdown
+          tone={resume.tone}
+          onSelect={selectResume}
+          sections={[
+            {
+              options: (Object.keys(RESUME_STATUS_INFO) as CandidateResumeStatus[]).map(
+                (key) => ({
+                  value: key,
+                  label: RESUME_STATUS_INFO[key].label,
+                  current: key === candidate.resumeStatus,
+                })
+              ),
+            },
+          ]}
+        >
+          <FileText aria-hidden="true" />
+          {resume.label}
+        </ChipDropdown>
 
-        <span className={`rp-chip rp-chip-${talentTone}`}>
-          <TalentIcon aria-hidden="true" />
-          {talentType.label}
-        </span>
-
-        {typeof candidate.daysInProcess === "number" && (
-          <span className={`rp-chip rp-chip-${daysTone}`}>
-            <Clock3 aria-hidden="true" />
-            {candidate.daysInProcess} days in process
+        <ChipDropdown
+          tone={validated ? "green" : "blue"}
+          dashed={!validated}
+          title={
+            validated
+              ? "Validated in the internal tech interview"
+              : "Estimated by recruiting; it is validated in the internal tech interview"
+          }
+          onSelect={selectSeniority}
+          sections={[
+            {
+              heading: "Seniority",
+              options: SENIORITY_LEVELS.map((level) => ({
+                value: level,
+                label: level,
+                current: level === seniority,
+              })),
+            },
+          ]}
+        >
+          <UserCheck aria-hidden="true" />
+          {seniority}
+          <span className="text-[11px] font-medium opacity-80">
+            {validated ? "✓ validated" : "estimate"}
           </span>
+        </ChipDropdown>
+
+        {candidate.talentType === "internal_candidate" && (
+          <ChipDropdown
+            tone="violet"
+            onSelect={() =>
+              onChange({ talentType: "external" }, "Marked the candidate as external.")
+            }
+            sections={[
+              { options: [{ value: "external", label: "Mark as external talent" }] },
+            ]}
+          >
+            <Building2 aria-hidden="true" />
+            Internal
+          </ChipDropdown>
+        )}
+
+        {candidate.talentType === "trick_internal" && (
+          <RpChip tone="violet">
+            <Building2 aria-hidden="true" />
+            Internal
+          </RpChip>
+        )}
+
+        {ndaApplies && (
+          <ChipDropdown
+            tone={nda === "signed" ? "green" : nda === "sent" ? "blue" : "amber"}
+            title="NDA for technical tests (confidential project)"
+            onSelect={(value) => {
+              const next = value as NdaStatus;
+              const label = NDA_LABELS[next];
+
+              onChange({ ndaStatus: next }, `Set NDA to ${label}.`, {
+                title: "NDA",
+                description: `NDA set to ${label}.`,
+              });
+            }}
+            sections={[
+              {
+                options: (Object.keys(NDA_LABELS) as NdaStatus[]).map((key) => ({
+                  value: key,
+                  label: NDA_LABELS[key],
+                  current: key === nda,
+                })),
+              },
+            ]}
+          >
+            <FileText aria-hidden="true" />
+            {NDA_LABELS[nda]}
+          </ChipDropdown>
+        )}
+
+        {active && stageDays !== null && (
+          <RpChip
+            tone={
+              stageDays >= STAGE_ALERT_DAYS
+                ? "red"
+                : stageDays >= STAGE_WARN_DAYS
+                  ? "amber"
+                  : "gray"
+            }
+            title="Days since the candidate entered the current stage"
+          >
+            <Clock3 aria-hidden="true" />
+            {stageDays} days in {status.label}
+          </RpChip>
+        )}
+
+        {daysInProcess !== null && (
+          <RpChip
+            tone={active && daysInProcess >= AGING_DAYS ? "red" : "amber"}
+            title={
+              candidate.processStartedAt
+                ? `In process since ${candidate.processStartedAt}`
+                : undefined
+            }
+          >
+            <Clock3 aria-hidden="true" />
+            {daysInProcess} days in process
+          </RpChip>
+        )}
+
+        {daysSinceContact !== null && (
+          <RpChip
+            tone={active && daysSinceContact >= CONTACT_ALERT_DAYS ? "red" : "gray"}
+            title={candidate.lastContactAt}
+          >
+            <Phone aria-hidden="true" />
+            Last contact{" "}
+            {daysSinceContact === 0 ? "today" : `${daysSinceContact} days ago`}
+          </RpChip>
+        )}
+
+        {candidate.processStatus === "hired" && hireMetrics.timeToHire !== null && (
+          <RpChip
+            tone="green"
+            title="From the opening of the position until the offer was accepted"
+          >
+            <Clock3 aria-hidden="true" />
+            Time to hire {hireMetrics.timeToHire} d
+          </RpChip>
+        )}
+
+        {candidate.processStatus === "hired" && candidate.startDate && (
+          <RpChip
+            tone="gray"
+            title={`Hired ${candidate.hiredAt ?? ""} · starts ${candidate.startDate}. The notice period does not depend on Trick or the client.`}
+          >
+            <Clock3 aria-hidden="true" />
+            Starts {candidate.startDate}
+            {hireMetrics.notice !== null ? ` · ${hireMetrics.notice} d notice` : ""}
+            {hireMetrics.timeToStart !== null ? ` · ${hireMetrics.timeToStart} d to start` : ""}
+          </RpChip>
         )}
       </div>
 
-      <div>
-        <div className="mb-2 flex items-center gap-2">
-          <Zap className="h-3.5 w-3.5 text-violet-500" />
-          <p className="text-xs font-semibold uppercase tracking-wide app-text-muted">
-            Automation insights
-          </p>
+      <InsightsGrid
+        insights={insights}
+        emptyText="No automation insights for this candidate yet."
+      />
+    </div>
+  );
+}
+
+const ATTACHMENT_SLOTS = [
+  { key: "cv", label: "Original CV" },
+  { key: "portfolio", label: "Portfolio (PDF)" },
+  { key: "trickResume", label: "Trick Studios resume" },
+] as const;
+
+function CandidateAttachments({
+  candidate,
+  onChange,
+}: {
+  candidate: CandidateMini;
+  onChange: CandidateChange;
+}) {
+  const files = candidate.files ?? {};
+
+  return (
+    <div className="overflow-hidden rounded-xl border app-border app-card">
+      {ATTACHMENT_SLOTS.map((slot) => {
+        const slotFiles = files[slot.key] ?? [];
+        const missingTrickResume =
+          slot.key === "trickResume" &&
+          candidate.resumeStatus === "resume_ready" &&
+          slotFiles.length === 0;
+
+        return (
+          <div
+            key={slot.key}
+            className="grid grid-cols-[150px_1fr_auto] items-center gap-3 border-t px-4 py-3 first:border-t-0 app-border"
+          >
+            <span className="text-sm font-semibold app-text-primary">{slot.label}</span>
+
+            <div className="min-w-0 text-sm">
+              {slotFiles.length > 0 ? (
+                <div className="space-y-1">
+                  {slotFiles.map((file) => (
+                    <div key={file.id} className="flex items-center gap-2 app-text-secondary">
+                      <FileText className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{file.name}</span>
+                      <span className="shrink-0 text-xs app-text-muted">
+                        {formatFileSize(file.size)}
+                      </span>
+
+                      <button
+                        type="button"
+                        aria-label={`Remove ${file.name}`}
+                        onClick={() =>
+                          onChange(
+                            {
+                              files: {
+                                ...files,
+                                [slot.key]: slotFiles.filter((item) => item.id !== file.id),
+                              },
+                            },
+                            `Removed ${file.name} from ${slot.label}.`
+                          )
+                        }
+                        className="app-text-muted hover:opacity-80"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <span className="app-text-muted">No file attached</span>
+              )}
+
+              {missingTrickResume && (
+                <span className="bd-amber mt-1 block text-xs">
+                  ⚠ Resume is marked ready but the PDF is not attached
+                </span>
+              )}
+            </div>
+
+            <FileAttachButton
+              label="Attach"
+              onFiles={(picked) =>
+                onChange(
+                  { files: { ...files, [slot.key]: [...slotFiles, ...picked] } },
+                  `Attached ${plural(picked.length, "file", "files")} to ${slot.label}.`,
+                  {
+                    title: "File attached",
+                    description: `${slot.label}: ${picked.map((file) => file.name).join(", ")}.`,
+                  }
+                )
+              }
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DialogShell({
+  title,
+  confirmLabel,
+  onClose,
+  onConfirm,
+  children,
+}: {
+  title: string;
+  confirmLabel: string;
+  onClose: () => void;
+  onConfirm: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[80] flex items-start justify-center bg-black/60 px-4 pt-[14vh] backdrop-blur-sm"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="w-full max-w-[470px] overflow-hidden rounded-2xl border shadow-2xl app-border app-card"
+      >
+        <div className="px-6 py-5">
+          <h3 className="text-lg font-semibold app-text-primary">{title}</h3>
+          <div className="mt-3">{children}</div>
         </div>
 
-        <div className="grid gap-2.5 md:grid-cols-3">
-          {automationInsights.length > 0 ? (
-            automationInsights.map((insight) => (
-              <div
-                key={insight.id}
-                className={`rp-detail-insight flex items-start gap-3 rounded-xl border px-3 py-2.5 ${automationInsightClassName(
-                  insight.severity
-                )}`}
-              >
-                <div className="mt-0.5 shrink-0">
-                  <AutomationIcon icon={insight.icon} />
-                </div>
+        <div className="flex justify-end gap-3 border-t px-6 py-4 app-border">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border px-4 py-2 text-sm font-medium app-border app-text-secondary hover:bg-black/[0.04]"
+          >
+            Cancel
+          </button>
 
-                <div className="min-w-0">
-                  <p className="text-xs font-bold">{insight.title}</p>
-                  <p className="mt-0.5 text-xs leading-5">{insight.description}</p>
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="rounded-xl border border-dashed px-3 py-3 text-center text-sm app-border app-text-muted md:col-span-3">
-              No automation insights for this candidate yet.
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={onConfirm}
+            style={{ backgroundColor: "#7c3aed", color: "#ffffff" }}
+            className="rounded-xl px-5 py-2 text-sm font-semibold transition hover:opacity-90"
+          >
+            {confirmLabel}
+          </button>
         </div>
       </div>
     </div>
+  );
+}
+
+function CandidateDialogs({
+  kind,
+  candidate,
+  position,
+  onClose,
+  onChange,
+}: {
+  kind: "hire" | "contact" | "tech";
+  candidate: CandidateMini;
+  position: PositionCardType;
+  onClose: () => void;
+  onChange: CandidateChange;
+}) {
+  const [hireDate, setHireDate] = useState(todayIso());
+  const [contactResult, setContactResult] = useState<"replied" | "none">("replied");
+  const [techSeniority, setTechSeniority] = useState(
+    candidate.seniority ?? normalizeSeniority(position.seniority) ?? "Senior"
+  );
+
+  if (kind === "hire") {
+    return (
+      <DialogShell
+        title="Mark as Hired"
+        confirmLabel="Confirm hire"
+        onClose={onClose}
+        onConfirm={() => {
+          const date = hireDate || todayIso();
+
+          onChange(
+            {
+              processStatus: "hired",
+              hiredAt: date,
+              talentType: "trick_internal",
+              stageHistory: appendStageEntry(candidate, "hired"),
+            },
+            `Hired on ${date}.`,
+            {
+              title: "Hired",
+              description: `Hired on ${date}. Now internal talent; removed from the position list and kept in the Candidates database.`,
+            }
+          );
+          onClose();
+        }}
+      >
+        <p className="text-sm leading-6 app-text-secondary">This will:</p>
+
+        <ul className="mb-3 mt-1 list-disc space-y-1 pl-5 text-sm app-text-secondary">
+          <li>
+            set the status to <b>Hired</b> with the hire date,
+          </li>
+          <li>
+            turn the candidate into <b>Internal</b> talent,
+          </li>
+          <li>remove them from the position list (the hire keeps counting),</li>
+          <li>keep them in the Candidates database for future positions.</li>
+        </ul>
+
+        <label className="block text-xs font-semibold app-text-secondary">
+          Hire date
+          <input
+            type="date"
+            value={hireDate}
+            onChange={(event) => setHireDate(event.target.value)}
+            className="app-input mt-1.5 w-full rounded-xl border px-3 py-2 text-sm outline-none"
+          />
+        </label>
+      </DialogShell>
+    );
+  }
+
+  if (kind === "contact") {
+    return (
+      <DialogShell
+        title="Log contact"
+        confirmLabel="Save"
+        onClose={onClose}
+        onConfirm={() => {
+          const replied = contactResult === "replied";
+
+          onChange(
+            {
+              lastContactAt: todayIso(),
+              contactAttempts: replied ? 0 : (candidate.contactAttempts ?? 0) + 1,
+            },
+            replied ? "Logged a contact: the candidate replied." : "Logged a contact attempt without reply.",
+            {
+              title: "Contact logged",
+              description: replied
+                ? "The candidate replied."
+                : "Contact attempt without reply.",
+            }
+          );
+          onClose();
+        }}
+      >
+        <p className="mb-3 text-sm leading-6 app-text-secondary">
+          Records the contact and updates “Last contact”.
+        </p>
+
+        <label className="block text-xs font-semibold app-text-secondary">
+          Result
+          <select
+            value={contactResult}
+            onChange={(event) => setContactResult(event.target.value as "replied" | "none")}
+            className="app-input mt-1.5 w-full rounded-xl border px-3 py-2 text-sm outline-none"
+          >
+            <option value="replied">Replied</option>
+            <option value="none">No reply</option>
+          </select>
+        </label>
+      </DialogShell>
+    );
+  }
+
+  return (
+    <DialogShell
+      title="Record internal tech interview"
+      confirmLabel="Save result"
+      onClose={onClose}
+      onConfirm={() => {
+        onChange(
+          {
+            seniority: techSeniority,
+            seniorityValidated: true,
+            techInterviewDoneAt: todayIso(),
+          },
+          `Recorded the internal tech interview. Seniority: ${techSeniority}.`,
+          {
+            title: "Internal tech interview",
+            description: `Result recorded. Seniority validated as ${techSeniority}.`,
+          }
+        );
+        onClose();
+      }}
+    >
+      <p className="mb-3 text-sm leading-6 app-text-secondary">
+        The level given by the internal specialist replaces the recruiter’s estimate.
+      </p>
+
+      <label className="block text-xs font-semibold app-text-secondary">
+        Seniority after the interview
+        <select
+          value={techSeniority}
+          onChange={(event) => setTechSeniority(event.target.value)}
+          className="app-input mt-1.5 w-full rounded-xl border px-3 py-2 text-sm outline-none"
+        >
+          {SENIORITY_LEVELS.map((level) => (
+            <option key={level} value={level}>
+              {level}
+            </option>
+          ))}
+        </select>
+      </label>
+    </DialogShell>
   );
 }
 
@@ -3005,9 +4102,21 @@ function escapeHtml(value: string) {
 
 type CandidateDetailContentProps = {
   candidate: CandidateMini;
+  position: PositionCardType;
+  project: ProjectColumnType;
+  allProjects: ProjectColumnType[];
+  techOpenSignal?: number;
+  onChange: CandidateChange;
 };
 
-function CandidateDetailContent({ candidate }: CandidateDetailContentProps) {
+function CandidateDetailContent({
+  candidate,
+  position,
+  project,
+  allProjects,
+  techOpenSignal,
+  onChange,
+}: CandidateDetailContentProps) {
   const salaryValue =
     candidate.salaryCurrent || candidate.salaryExpected
       ? `${candidate.salaryCurrent || "Not defined"} actual · ${
@@ -3017,31 +4126,6 @@ function CandidateDetailContent({ candidate }: CandidateDetailContentProps) {
 
   return (
     <div className="space-y-5">
-      <section>
-        <div className="mb-2 flex items-center gap-2">
-          <Clock3 className="h-3.5 w-3.5 app-text-muted" />
-          <p className="text-xs font-semibold uppercase tracking-wide app-text-muted">
-            Process metrics
-          </p>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <InfoBox label="Recruiter owner">
-            {candidate.recruiterOwner || "Not defined"}
-          </InfoBox>
-
-          <InfoBox label="Days in process">
-            {candidate.daysInProcess ?? "Not defined"}
-          </InfoBox>
-
-          <InfoBox label="Last contact">
-            {candidate.lastContactAt || "Not defined"}
-          </InfoBox>
-
-          <InfoBox label="Source">{candidate.source || "Not defined"}</InfoBox>
-        </div>
-      </section>
-
       <section>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide app-text-muted">
           Personal info
@@ -3083,6 +4167,14 @@ function CandidateDetailContent({ candidate }: CandidateDetailContentProps) {
       </section>
 
       <section>
+        <SectionLabel icon={<Paperclip className="h-3.5 w-3.5 app-text-muted" />}>
+          Attachments
+        </SectionLabel>
+
+        <CandidateAttachments candidate={candidate} onChange={onChange} />
+      </section>
+
+      <section>
         <div className="mb-2 flex items-center gap-2">
           <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
           <p className="text-xs font-semibold uppercase tracking-wide app-text-muted">
@@ -3096,6 +4188,34 @@ function CandidateDetailContent({ candidate }: CandidateDetailContentProps) {
           initialText={candidate.notes}
           placeholder="Write a note..."
           ariaLabel="Recruiter notes"
+        />
+      </section>
+
+      <section>
+        <SectionLabel icon={<FlaskConical className="h-3.5 w-3.5 app-text-muted" />}>
+          Internal tech interviews
+        </SectionLabel>
+
+        <TechInterviewsSection
+          candidate={candidate}
+          position={position}
+          projectName={project.clientName}
+          openSignal={techOpenSignal}
+          onChange={onChange}
+        />
+      </section>
+
+      <section>
+        <SectionLabel icon={<Clock3 className="h-3.5 w-3.5 app-text-muted" />}>
+          Time per stage
+        </SectionLabel>
+
+        <CandidateStageHistory
+          candidate={candidate}
+          position={position}
+          project={project}
+          allProjects={allProjects}
+          onChange={onChange}
         />
       </section>
 
@@ -3399,23 +4519,6 @@ function ActivityEventItem({ activity }: { activity: LocalActivity }) {
         <span className="app-text-primary">{activity.text}</span>
         <span className="ml-2 app-text-muted">{time}</span>
       </p>
-    </div>
-  );
-}
-
-type InfoBoxProps = {
-  label: string;
-  children: ReactNode;
-};
-
-function InfoBox({ label, children }: InfoBoxProps) {
-  return (
-    <div className="rounded-xl border p-3 app-border bg-black/[0.025] dark:bg-white/[0.035]">
-      <p className="text-xs font-semibold uppercase tracking-wide app-text-muted">
-        {label}
-      </p>
-
-      <p className="mt-1 text-sm font-medium app-text-primary">{children}</p>
     </div>
   );
 }
