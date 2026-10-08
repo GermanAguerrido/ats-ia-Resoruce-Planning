@@ -4,11 +4,13 @@ import { useState } from "react";
 import { Archive, Flag, GripVertical, Lock, Plus, RotateCcw } from "lucide-react";
 import type {
   CandidateMini,
+  CandidateProcessStatus,
   PositionCard as PositionCardType,
   PositionStatus,
   ProjectColumn as ProjectColumnType,
 } from "@/app/data/resourcePlanningMock";
 import { getAlertSummary, getProjectMetrics } from "@/app/lib/boardMetrics";
+import type { CandidateAlert } from "@/app/lib/candidateAlerts";
 import type { BoardDensity } from "./BoardFilters";
 import type { BoardDragState, ProjectDropSide } from "./boardDnd";
 import { ProjectMainCard } from "./ProjectMainCard";
@@ -36,6 +38,19 @@ type Props = {
   onRestore?: () => void;
   onAddPosition?: () => void;
   onAddCandidate?: (position: PositionCardType) => void;
+  onQuickStage?: (
+    candidate: CandidateMini,
+    position: PositionCardType,
+    to: CandidateProcessStatus
+  ) => void;
+  onQuickContact?: (candidate: CandidateMini, position: PositionCardType) => void;
+  onQuickSchedule?: (candidate: CandidateMini, position: PositionCardType) => void;
+  onToggleMoreRequested?: (position: PositionCardType) => void;
+  onToggleJdReviewed?: (position: PositionCardType) => void;
+  // "My alerts"
+  candidateFilter?: (candidate: CandidateMini, position: PositionCardType) => boolean;
+  getAlerts?: (candidate: CandidateMini, position: PositionCardType) => CandidateAlert[];
+  forceExpanded?: boolean;
 };
 
 // Orden de las etiquetas: estado → prioridad → visibilidad. Siempre en una sola línea.
@@ -114,6 +129,14 @@ export function ProjectColumn({
   onRestore,
   onAddPosition,
   onAddCandidate,
+  onQuickStage,
+  onQuickContact,
+  onQuickSchedule,
+  onToggleMoreRequested,
+  onToggleJdReviewed,
+  candidateFilter,
+  getAlerts,
+  forceExpanded,
 }: Props) {
   const status = statusConfig[project.status];
   const priority = priorityConfig[project.priority];
@@ -444,6 +467,32 @@ export function ProjectColumn({
                 onAddCandidate={
                   onAddCandidate ? () => onAddCandidate(position) : undefined
                 }
+                onQuickStage={
+                  onQuickStage
+                    ? (candidate, to) => onQuickStage(candidate, position, to)
+                    : undefined
+                }
+                onQuickContact={
+                  onQuickContact
+                    ? (candidate) => onQuickContact(candidate, position)
+                    : undefined
+                }
+                onQuickSchedule={
+                  onQuickSchedule
+                    ? (candidate) => onQuickSchedule(candidate, position)
+                    : undefined
+                }
+                onToggleMoreRequested={
+                  onToggleMoreRequested ? () => onToggleMoreRequested(position) : undefined
+                }
+                onToggleJdReviewed={
+                  onToggleJdReviewed ? () => onToggleJdReviewed(position) : undefined
+                }
+                candidateFilter={
+                  candidateFilter ? (candidate) => candidateFilter(candidate, position) : undefined
+                }
+                getAlerts={getAlerts ? (candidate) => getAlerts(candidate, position) : undefined}
+                forceExpanded={forceExpanded}
               />
             ))}
 

@@ -256,6 +256,25 @@ import type {
       }
     }
   
+    // Entrevista agendada: la del cliente se agenda al pasar a esa etapa; las demás se limpian
+    // cuando el candidato ya pasó por ellas (la entrevista ya ocurrió).
+    const scheduled = candidate.scheduledInterview;
+  
+    if (to === "client_interview" && input.date) {
+      updates.scheduledInterview = { type: "client_interview", at: input.date };
+    } else if (scheduled) {
+      const scheduledIndex = getProcessStatusIndex(scheduled.type);
+      const nextIndex = getProcessStatusIndex(to);
+      const done =
+        isOutcomeStatus(to) ||
+        nextIndex > scheduledIndex ||
+        (scheduled.type !== "client_interview" && nextIndex === scheduledIndex);
+  
+      if (done) {
+        updates.scheduledInterview = undefined;
+      }
+    }
+  
     let techInterviewToSave: TechInterview | undefined;
     const techSource = input.newTechInterview ?? input.reuseTechInterview;
   

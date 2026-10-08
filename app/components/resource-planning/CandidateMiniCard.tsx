@@ -1,9 +1,12 @@
-import type { MouseEvent } from "react";
+import { useState, type MouseEvent } from "react";
 import {
   AlertTriangle,
+  CalendarClock,
+  ChevronDown,
   CheckCircle2,
   Clock3,
   FileText,
+  Phone,
   PauseCircle,
   UserCheck,
   Building2,
@@ -13,9 +16,13 @@ import type {
   CandidateProcessStatus,
   CandidateResumeStatus,
 } from "@/app/data/resourcePlanningMock";
+import type { CandidateAlert } from "@/app/lib/candidateAlerts";
+import { getInterviewTypeLabel } from "./QuickActionDialogs";
 import {
   AGING_DAYS,
   CONTACT_ALERT_DAYS,
+  PROCESS_FLOW,
+  PROCESS_OUTCOMES,
   getDaysInProcess,
   getDaysSinceContact,
   getPresentationReadiness,
@@ -26,6 +33,12 @@ import {
 type Props = {
   candidate: CandidateMini;
   onClick?: () => void;
+  // Acciones rápidas al pasar el mouse (si faltan, no se muestran)
+  onQuickStage?: (to: CandidateProcessStatus) => void;
+  onQuickContact?: () => void;
+  onQuickSchedule?: () => void;
+  // Con "My alerts" activo se muestran estas alertas en lugar de las señales habituales
+  alerts?: CandidateAlert[];
 };
 
 const processStatusConfig: Record<
@@ -103,7 +116,7 @@ const resumeStatusConfig: Record<
 type CandidateSignal = {
   id: string;
   label: string;
-  icon: "alert" | "check" | "clock" | "file" | "pause" | "user";
+  icon: "alert" | "check" | "clock" | "file" | "pause" | "user" | "calendar";
   className: string;
 };
 
@@ -113,6 +126,18 @@ function getCandidateSignals(candidate: CandidateMini): CandidateSignal[] {
   const daysInProcess = getDaysInProcess(candidate);
   const daysSinceContact = getDaysSinceContact(candidate);
   const readiness = getPresentationReadiness(candidate);
+
+  if (active && candidate.scheduledInterview) {
+    const { type, at } = candidate.scheduledInterview;
+    const passed = new Date(at).getTime() < Date.now();
+
+    signals.push({
+      id: "scheduled",
+      label: `${getInterviewTypeLabel(type)} · ${at.replace("T", " ")}`,
+      icon: "calendar",
+      className: passed ? "rp-auto-signal-warning" : "rp-auto-signal-info",
+    });
+  }
 
   if (active && daysInProcess !== null && daysInProcess >= AGING_DAYS) {
     signals.push({
@@ -201,6 +226,10 @@ function SignalIcon({ icon }: { icon: CandidateSignal["icon"] }) {
     return <FileText className="h-3 w-3" />;
   }
 
+  if (icon === "calendar") {
+    return <CalendarClock className="h-3 w-3" />;
+  }
+
   if (icon === "pause") {
     return <PauseCircle className="h-3 w-3" />;
   }
@@ -217,7 +246,95 @@ function getRecruiterInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
-export function CandidateMiniCard({ candidate, onClick }: Props) {
+function QuickBar({
+  candidate,
+  onQuickStage,
+  onQuickContact,
+  onQuickSchedule,
+  onMenuChange,
+}: {
+  candidate: CandidateMini;
+  onQuickStage?: (to: CandidateProcessStatus) => void;
+  onQuickContact?: () => void;
+  onQuickSchedule?: () => void;
+  onMenuChange: (open: boolean) => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const setMenu = (open: boolean) => {
+    setMenuOpen(open);
+    onMenuChange(open);
+  };
+
+  const buttonClass =
+    "rounded-lg px-2 py-1 text-[11px] font-semibold app-text-secondary transition hover:bg-violet-500/15 hover:text-violet-600 dark:hover:text-violet-300";
+
+  const stop = (event: MouseEvent) => event.stopPropagation();
+
+  return (
+    <div
+      onClick={stop}
+      className="absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-xl border border-violet-500/60 p-0.5 shadow-lg app-card"
+    >
+      {onQuickStage && (
+        <div className="relative">
+          <button type="button" onClick={() => setMenu(!menuOpen)} className={buttonClass}>
+            ⇄ Status <ChevronDown className="inline h-3 w-3" />
+          </button>
+
+          {menuOpen && (
+            <>
+              <div className="fixed inset-0 z-20" onClick={() => setMenu(false)} />
+
+              <div className="absolute right-0 top-full z-30 mt-1 w-48 overflow-hidden rounded-xl border py-1 text-xs shadow-xl app-border app-card">
+                {[...PROCESS_FLOW, ...PROCESS_OUTCOMES]
+                  .filter((item) => item.value !== candidate.processStatus)
+                  .map((item) => (
+                    <button
+                      key={item.value}
+                      type="button"
+                      onClick={() => {
+                        setMenu(false);
+                        onQuickStage(item.value);
+                      }}
+                      className="block w-full px-3 py-1.5 text-left app-text-primary hover:bg-violet-500/10"
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {onQuickContact && (
+        <button type="button" onClick={onQuickContact} className={buttonClass}>
+          <Phone className="mr-1 inline h-3 w-3" />
+          Contact
+        </button>
+      )}
+
+      {onQuickSchedule && (
+        <button type="button" onClick={onQuickSchedule} className={buttonClass}>
+          <CalendarClock className="mr-1 inline h-3 w-3" />
+          Schedule
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function CandidateMiniCard({
+  candidate,
+  onClick,
+  onQuickStage,
+  onQuickContact,
+  onQuickSchedule,
+  alerts,
+}: Props) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const hasQuickActions = Boolean(onQuickStage || onQuickContact || onQuickSchedule);
   const handleClick = (event: MouseEvent<HTMLDivElement>) => {
     event.stopPropagation();
 
@@ -237,7 +354,7 @@ export function CandidateMiniCard({ candidate, onClick }: Props) {
   return (
     <div
       onClick={handleClick}
-      className={`rounded-xl border p-3 transition app-border bg-white/20 hover:bg-white/30 dark:bg-white/[0.04] dark:hover:bg-white/[0.07] ${
+      className={`group/cand relative rounded-xl border p-3 transition app-border bg-white/20 hover:bg-white/30 dark:bg-white/[0.04] dark:hover:bg-white/[0.07] ${
         onClick ? "cursor-pointer hover:border-violet-500/40" : ""
       }`}
     >
@@ -253,16 +370,30 @@ export function CandidateMiniCard({ candidate, onClick }: Props) {
           </p>
         </div>
 
-        {isInternal ? (
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-500/30 border border-violet-500/50">
-            <Building2 className="h-3.5 w-3.5 text-violet-600 dark:text-violet-300" />
-          </div>
-        ) : (
-          <div className="rp-avatar-badge flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold">
-            {getRecruiterInitials(candidate.recruiterOwner || "")}
-          </div>
-        )}
+        <div className={hasQuickActions ? "group-hover/cand:invisible" : ""}>
+          {isInternal ? (
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-500/30 border border-violet-500/50">
+              <Building2 className="h-3.5 w-3.5 text-violet-600 dark:text-violet-300" />
+            </div>
+          ) : (
+            <div className="rp-avatar-badge flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold">
+              {getRecruiterInitials(candidate.recruiterOwner || "")}
+            </div>
+          )}
+        </div>
       </div>
+
+      {hasQuickActions && (
+        <div className={menuOpen ? "block" : "hidden group-hover/cand:block"}>
+          <QuickBar
+            candidate={candidate}
+            onQuickStage={onQuickStage}
+            onQuickContact={onQuickContact}
+            onQuickSchedule={onQuickSchedule}
+            onMenuChange={setMenuOpen}
+          />
+        </div>
+      )}
 
       <div className="mt-3 flex items-center justify-between gap-2">
         <span
@@ -278,7 +409,25 @@ export function CandidateMiniCard({ candidate, onClick }: Props) {
         </span>
       </div>
 
-      {signals.length > 0 && (
+      {alerts && alerts.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {alerts.map((alert) => (
+            <span
+              key={alert.id}
+              className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-semibold ${
+                alert.tone === "danger"
+                  ? "border-red-500/50 bg-red-500/10 text-red-600 dark:text-red-300"
+                  : "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+              }`}
+            >
+              <AlertTriangle className="h-3 w-3" />
+              {alert.label}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {!alerts && signals.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {signals.map((signal) => (
             <span

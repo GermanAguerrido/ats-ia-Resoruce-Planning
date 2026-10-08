@@ -105,6 +105,8 @@ export type CandidateMini = {
   outcomeReason?: string;
   reviewAt?: string;
   stageHistory?: StageHistoryEntry[];
+  // Próxima entrevista agendada (puede cargarse por adelantado). type = etapa a la que corresponde.
+  scheduledInterview?: { type: CandidateProcessStatus; at: string };
   // Sin valor = "required" si el proyecto exige NDA
   ndaStatus?: NdaStatus;
   files?: CandidateFiles;

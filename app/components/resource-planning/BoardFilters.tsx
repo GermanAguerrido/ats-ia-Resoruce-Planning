@@ -293,3 +293,37 @@ export function DensityToggle({
     </div>
   );
 }
+
+/** Botón "My alerts": deja solo los candidatos propios (owner o co-recruiter) con alertas. */
+export function MyAlertsToggle({
+  active,
+  count,
+  onToggle,
+}: {
+  active: boolean;
+  count: number;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={active}
+      title="Show only your candidates that need attention"
+      className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium transition ${
+        active
+          ? "border-violet-500 bg-violet-500 text-white"
+          : "app-border app-text-secondary hover:bg-black/[0.04]"
+      }`}
+    >
+      My alerts
+      <span
+        className={`rounded-full px-1.5 text-[11px] font-bold ${
+          active ? "bg-white/25 text-white" : "bg-red-500 text-white"
+        }`}
+      >
+        {count}
+      </span>
+    </button>
+  );
+}

@@ -1,11 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, Clock3, Plus } from "lucide-react";
+import { Check, ChevronDown, Clock3, Plus, Target, UserPlus } from "lucide-react";
 import type {
   CandidateMini,
+  CandidateProcessStatus,
   PositionCard as PositionCardType,
 } from "@/app/data/resourcePlanningMock";
+import type { CandidateAlert } from "@/app/lib/candidateAlerts";
+import { formatPositionTarget, isTargetOverdue } from "@/app/lib/positionTarget";
 import { AGING_THRESHOLD_DAYS, getPositionAverageDays } from "@/app/lib/boardMetrics";
 import { isHiredCandidate } from "@/app/lib/candidateStatus";
 import type { BoardDensity } from "./BoardFilters";
@@ -23,6 +26,17 @@ type Props = {
   onDragEnd?: () => void;
   onDropBefore?: () => void;
   onAddCandidate?: () => void;
+  // Acciones rápidas de candidatos
+  onQuickStage?: (candidate: CandidateMini, to: CandidateProcessStatus) => void;
+  onQuickContact?: (candidate: CandidateMini) => void;
+  onQuickSchedule?: (candidate: CandidateMini) => void;
+  // Acciones rápidas de la posición (marcas)
+  onToggleMoreRequested?: () => void;
+  onToggleJdReviewed?: () => void;
+  // "My alerts": muestra solo estos candidatos (con sus alertas) y la posición abierta
+  candidateFilter?: (candidate: CandidateMini) => boolean;
+  getAlerts?: (candidate: CandidateMini) => CandidateAlert[];
+  forceExpanded?: boolean;
 };
 
 const statusConfig = {
@@ -68,6 +82,14 @@ export function PositionCard({
   onDragEnd,
   onDropBefore,
   onAddCandidate,
+  onQuickStage,
+  onQuickContact,
+  onQuickSchedule,
+  onToggleMoreRequested,
+  onToggleJdReviewed,
+  candidateFilter,
+  getAlerts,
+  forceExpanded = false,
 }: Props) {
   const config = statusConfig[position.status];
   const [isExpanded, setIsExpanded] = useState(false);
@@ -76,7 +98,8 @@ export function PositionCard({
   const totalToFill = position.quantity ?? 1;
   const hiredCandidates = position.candidates.filter(isHiredCandidate);
   const activeCandidates = position.candidates.filter(
-    (candidate) => !isHiredCandidate(candidate)
+    (candidate) =>
+      !isHiredCandidate(candidate) && (!candidateFilter || candidateFilter(candidate))
   );
   const hiredCount = hiredCandidates.length;
   const [showHired, setShowHired] = useState(false);
@@ -86,6 +109,12 @@ export function PositionCard({
   const isAging = averageDays !== null && averageDays >= AGING_THRESHOLD_DAYS;
   const showAverage =
     averageDays !== null && (density === "comfortable" || isAging);
+
+  const expanded = isExpanded || forceExpanded;
+  const isOpen = position.status === "open";
+  const overdue = isTargetOverdue(position.target);
+  const markChip =
+    "inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold";
 
   const handleToggle = () => {
     setIsExpanded((current) => !current);
@@ -148,7 +177,7 @@ export function PositionCard({
           setIsDropTarget(false);
           onDragEnd?.();
         }}
-        className={`overflow-hidden rounded-xl border shadow-sm transition hover:shadow-md ${
+        className={`group/pos overflow-hidden rounded-xl border shadow-sm transition hover:shadow-md ${
           readOnly ? "" : "cursor-grab active:cursor-grabbing"
         } ${config.bgClass} ${config.borderClass} ${isDragging ? "opacity-40" : ""}`}
       >
@@ -208,8 +237,86 @@ export function PositionCard({
           </div>
         </div>
 
+        {/* Marcas de la posición: objetivo, JD y pedido de más candidatos */}
+        {isOpen && (
+          <div
+            className={`flex flex-wrap items-center gap-1.5 ${
+              density === "compact" ? "px-2.5 pb-1.5" : "px-3 pb-2.5"
+            }`}
+          >
+            {position.target && (
+              <span
+                title="Target date"
+                className={`${markChip} ${
+                  overdue
+                    ? "border-red-500/60 text-red-600 dark:text-red-300"
+                    : "app-border app-text-secondary"
+                }`}
+              >
+                <Target className="h-3 w-3" />
+                {formatPositionTarget(position.target)}
+                {overdue && " · overdue"}
+              </span>
+            )}
+
+            {position.jdReviewedAt ? (
+              <span
+                title={`JD reviewed on ${position.jdReviewedAt}${
+                  position.jdReviewedBy ? ` by ${position.jdReviewedBy}` : ""
+                }`}
+                className={`${markChip} border-emerald-500/50 text-emerald-700 dark:text-emerald-300`}
+              >
+                <Check className="h-3 w-3" />
+                JD reviewed
+                {position.jdReviewedBy ? ` · ${position.jdReviewedBy}` : ""}
+              </span>
+            ) : (
+              <span
+                title="The job description was not reviewed yet"
+                className={`${markChip} border-amber-500/50 text-amber-700 dark:text-amber-300`}
+              >
+                JD pending
+              </span>
+            )}
+
+            {position.moreCandidatesRequestedAt && (
+              <span
+                title={`More candidates requested on ${position.moreCandidatesRequestedAt}`}
+                className={`${markChip} border-amber-500/50 text-amber-700 dark:text-amber-300`}
+              >
+                <UserPlus className="h-3 w-3" />
+                More requested · {position.moreCandidatesRequestedAt}
+              </span>
+            )}
+
+            {!readOnly && (onToggleMoreRequested || onToggleJdReviewed) && (
+              <span className="ml-auto hidden items-center gap-1 group-hover/pos:flex">
+                {onToggleMoreRequested && (
+                  <button
+                    type="button"
+                    onClick={onToggleMoreRequested}
+                    className="rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold app-border app-text-secondary hover:border-violet-500/50 hover:text-violet-600"
+                  >
+                    {position.moreCandidatesRequestedAt ? "Clear request" : "Request more"}
+                  </button>
+                )}
+
+                {onToggleJdReviewed && (
+                  <button
+                    type="button"
+                    onClick={onToggleJdReviewed}
+                    className="rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold app-border app-text-secondary hover:border-violet-500/50 hover:text-violet-600"
+                  >
+                    {position.jdReviewedAt ? "Unmark JD" : "Mark JD reviewed"}
+                  </button>
+                )}
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Candidatos: solo visibles cuando está expandido */}
-        {isExpanded && (
+        {expanded && (
           <div className="space-y-2 px-3 pb-3">
             {activeCandidates.length > 0 ? (
               activeCandidates.map((candidate) => (
@@ -217,6 +324,18 @@ export function PositionCard({
                   key={candidate.id}
                   candidate={candidate}
                   onClick={() => onCandidateClick(candidate)}
+                  alerts={getAlerts?.(candidate)}
+                  onQuickStage={
+                    !readOnly && onQuickStage
+                      ? (to) => onQuickStage(candidate, to)
+                      : undefined
+                  }
+                  onQuickContact={
+                    !readOnly && onQuickContact ? () => onQuickContact(candidate) : undefined
+                  }
+                  onQuickSchedule={
+                    !readOnly && onQuickSchedule ? () => onQuickSchedule(candidate) : undefined
+                  }
                 />
               ))
             ) : (

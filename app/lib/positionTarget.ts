@@ -48,6 +48,33 @@ export function formatPositionTarget(target?: PositionTarget): string {
   return `Q${target.quarter} ${target.year}`;
 }
 
+/** ¿Ya pasó la fecha objetivo? (ASAP nunca vence; semana, mes y trimestre vencen al terminar). */
+export function isTargetOverdue(target?: PositionTarget, now = new Date()): boolean {
+  if (!target || target.type === "asap") {
+    return false;
+  }
+
+  let end: Date;
+
+  if (target.type === "date") {
+    end = new Date(`${target.date}T23:59:59`);
+  } else if (target.type === "week") {
+    // Semanas aproximadas: 1 = días 1-7, 2 = 8-14, 3 = 15-21, 4 = 22 hasta fin de mes
+    const lastDay =
+      target.week === 4
+        ? new Date(target.year, target.month + 1, 0).getDate()
+        : target.week * 7;
+
+    end = new Date(target.year, target.month, lastDay, 23, 59, 59);
+  } else if (target.type === "month") {
+    end = new Date(target.year, target.month + 1, 0, 23, 59, 59);
+  } else {
+    end = new Date(target.year, target.quarter * 3, 0, 23, 59, 59);
+  }
+
+  return Number.isNaN(end.getTime()) ? false : end.getTime() < now.getTime();
+}
+
 /** Valor inicial al elegir un tipo de fecha objetivo. */
 export function defaultTargetFor(type: PositionTargetType): PositionTarget {
   const now = new Date();
