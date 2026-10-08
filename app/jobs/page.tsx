@@ -245,10 +245,29 @@ export default function JobsPage() {
   );
 
   // Candidatos existentes (para buscarlos y sumarlos a una posición)
+  // Incluye proyectos archivados: un candidato duplicado puede estar en uno de ellos
   const candidateDirectory = useMemo(
-    () => buildCandidateDirectory(orderedProjects),
-    [orderedProjects]
+    () => buildCandidateDirectory(projectColumns),
+    [projectColumns]
   );
+
+  // Abre la ficha de un candidato existente (por ejemplo desde el aviso de duplicado)
+  const openExistingCandidate = (
+    projectId: string,
+    positionId: string,
+    candidateId: string
+  ) => {
+    const project = projectColumns.find((item) => item.id === projectId);
+    const position = project?.positions.find((item) => item.id === positionId);
+    const candidate = position?.candidates.find((item) => item.id === candidateId);
+
+    if (!project || !position || !candidate) {
+      return;
+    }
+
+    setCreateTarget(null);
+    setModalSession({ projectId, initialPosition: position, initialCandidate: candidate });
+  };
 
   const totalProjects =
     orderedProjects.length + (showArchived ? archivedProjects.length : 0);
@@ -771,6 +790,7 @@ export default function JobsPage() {
             onCreateCandidate={board.createCandidate}
             existingCandidates={candidateDirectory}
             onAddExistingCandidate={board.addExistingCandidate}
+            onOpenExistingCandidate={openExistingCandidate}
           />
         )}
           {quickStage &&

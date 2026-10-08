@@ -15,6 +15,8 @@ import {
 } from "@/app/data/resourcePlanningMock";
 import { appendActivityLog } from "@/app/lib/activityLog";
 import { buildStageChange, type StageMoveInput } from "@/app/lib/stageGates";
+import { buildCandidateDirectory } from "@/app/lib/candidateDirectory";
+import { findDuplicateCandidate } from "@/app/lib/duplicateCheck";
 import { addTechInterview } from "@/app/lib/techInterviews";
 import {
   PROCESS_STATUS_INFO,
@@ -355,6 +357,11 @@ export function useBoardState() {
     positionId: string,
     payload: NewCandidatePayload
   ) => {
+    // Red de seguridad: el formulario ya avisa, pero nunca se crea un duplicado
+    if (findDuplicateCandidate(payload, buildCandidateDirectory(projectColumns))) {
+      return;
+    }
+
     const id = `candidate-${makeId()}`;
     const today = new Date().toISOString().slice(0, 10);
 

@@ -348,9 +348,27 @@ export default function CandidatesPage() {
 
   // Candidatos existentes (para buscarlos y sumarlos a una posición)
   const candidateDirectory = useMemo(
-    () => buildCandidateDirectory(orderedProjects),
-    [orderedProjects]
+    () => buildCandidateDirectory(projectColumns),
+    [projectColumns]
   );
+
+  // Abre la ficha de un candidato existente (por ejemplo desde el aviso de duplicado)
+  const openExistingCandidate = (
+    projectId: string,
+    positionId: string,
+    candidateId: string
+  ) => {
+    const project = projectColumns.find((item) => item.id === projectId);
+    const position = project?.positions.find((item) => item.id === positionId);
+    const candidate = position?.candidates.find((item) => item.id === candidateId);
+
+    if (!project || !position || !candidate) {
+      return;
+    }
+
+    setCreateTarget(null);
+    setModalSession({ projectId, initialPosition: position, initialCandidate: candidate });
+  };
 
   const projectsWithPositions = orderedProjects.filter(
     (project) => project.positions.length > 0
@@ -689,6 +707,9 @@ export default function CandidatesPage() {
         <CreateEntityModal
           mode="candidate"
           projects={projectsWithPositions}
+          existingCandidates={candidateDirectory}
+          onAddExistingCandidate={board.addExistingCandidate}
+          onOpenExistingCandidate={openExistingCandidate}
           onClose={() => setCreateTarget(null)}
           onCreateProject={board.createProject}
           onCreatePosition={board.createPosition}
@@ -720,6 +741,7 @@ export default function CandidatesPage() {
             onCreateCandidate={board.createCandidate}
             existingCandidates={candidateDirectory}
             onAddExistingCandidate={board.addExistingCandidate}
+            onOpenExistingCandidate={openExistingCandidate}
           />
         )}
     </div>

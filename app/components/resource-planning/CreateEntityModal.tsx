@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ImageIcon, Plus, X } from "lucide-react";
 import type {
   CandidateProcessStatus,
@@ -12,6 +12,7 @@ import type {
 } from "@/app/data/resourcePlanningMock";
 import type { CandidateMini } from "@/app/data/resourcePlanningMock";
 import type { DirectoryCandidate } from "@/app/lib/candidateDirectory";
+import { findDuplicateCandidate, type DuplicateMatch } from "@/app/lib/duplicateCheck";
 import { fileToCoverDataUrl } from "@/app/lib/imageUtils";
 import { sanitizeRichHtml } from "@/app/lib/richText";
 import { SENIORITY_LEVELS } from "@/app/lib/candidateStatus";
@@ -80,6 +81,12 @@ type Props = {
     projectId: string,
     positionId: string,
     candidate: CandidateMini
+  ) => void;
+  // Abre la ficha de un candidato que ya existe (se usa cuando el alta es un duplicado)
+  onOpenExistingCandidate?: (
+    projectId: string,
+    positionId: string,
+    candidateId: string
   ) => void;
   onClose: () => void;
   onCreateProject: (payload: NewProjectPayload) => void;
@@ -644,14 +651,88 @@ function PositionForm({
 
 type CandidateTarget = { projectId: string; positionId: string };
 
+function DuplicateWarning({
+  match,
+  canAdd,
+  onOpen,
+  onAdd,
+}: {
+  match: DuplicateMatch;
+  canAdd: boolean;
+  onOpen?: () => void;
+  onAdd?: () => void;
+}) {
+  const { candidate, positions } = match.entry;
+  const places = positions.slice(0, 3).map((item) => item.label);
+
+  return (
+    <div
+      role="alert"
+      className="mt-3 rounded-xl border border-red-500/60 bg-red-500/10 px-4 py-3 text-sm"
+    >
+      <p className="font-semibold text-red-600 dark:text-red-300">
+        This candidate already exists (same {match.matchedBy.join(" and ")}).
+      </p>
+
+      <p className="mt-1 font-semibold app-text-primary">
+        {candidate.name} · {candidate.role}
+      </p>
+
+      <p className="mt-0.5 text-xs app-text-secondary">
+        Recruiter: {candidate.recruiterOwner ?? "Not assigned"}
+        {candidate.lastContactAt ? ` · Last contact: ${candidate.lastContactAt}` : ""}
+        {` · ID: ${candidate.id}`}
+      </p>
+
+      {places.length > 0 && (
+        <p className="mt-0.5 text-xs app-text-muted">
+          In: {places.join(" · ")}
+          {positions.length > places.length ? ` · +${positions.length - places.length} more` : ""}
+        </p>
+      )}
+
+      <div className="mt-2.5 flex flex-wrap gap-2">
+        {onOpen && (
+          <button
+            type="button"
+            onClick={onOpen}
+            className="rounded-lg border border-red-500/50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-500/10 dark:text-red-300"
+          >
+            Open candidate card
+          </button>
+        )}
+
+        {canAdd && onAdd && (
+          <button
+            type="button"
+            onClick={onAdd}
+            className="rounded-lg bg-violet-500 px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+          >
+            Add to this position instead
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function CandidateForm({
   initialRole = "",
   projects,
+  directory,
+  currentPositionId,
+  onOpenExisting,
+  onAddExisting,
   onSubmit,
   onCancel,
 }: {
   initialRole?: string;
   projects?: ProjectColumnType[];
+  // Para avisar si el candidato ya existe (mismo LinkedIn o mail)
+  directory?: DirectoryCandidate[];
+  currentPositionId?: string;
+  onOpenExisting?: (entry: DirectoryCandidate) => void;
+  onAddExisting?: (entry: DirectoryCandidate, target: CandidateTarget | null) => void;
   onSubmit: (payload: NewCandidatePayload, target: CandidateTarget | null) => void;
   onCancel: () => void;
 }) {
@@ -683,8 +764,19 @@ function CandidateForm({
   const [isInternal, setIsInternal] = useState(false);
   const [notes, setNotes] = useState("");
 
+  const duplicate = useMemo(
+    () => (directory ? findDuplicateCandidate({ email, linkedin }, directory) : null),
+    [directory, email, linkedin]
+  );
+
+  // Posición donde se agregaría: la elegida en el selector o la de la ficha actual
+  const targetPositionId = projects ? selectedPosition?.id : currentPositionId;
+  const alreadyInTarget = Boolean(
+    duplicate?.entry.positions.some((item) => item.positionId === targetPositionId)
+  );
+
   const canSubmit = Boolean(
-    name.trim() && role.trim() && (!projects || selectedPosition)
+    name.trim() && role.trim() && (!projects || selectedPosition) && !duplicate
   );
 
   const handleSubmit = (event: FormEvent) => {
@@ -836,6 +928,31 @@ function CandidateForm({
             />
           </Field>
         </div>
+
+        {duplicate && (
+          <DuplicateWarning
+            match={duplicate}
+            canAdd={Boolean(onAddExisting) && !alreadyInTarget}
+            onOpen={onOpenExisting ? () => onOpenExisting(duplicate.entry) : undefined}
+            onAdd={
+              onAddExisting
+                ? () =>
+                    onAddExisting(
+                      duplicate.entry,
+                      projects && selectedProject && selectedPosition
+                        ? { projectId: selectedProject.id, positionId: selectedPosition.id }
+                        : null
+                    )
+                : undefined
+            }
+          />
+        )}
+
+        {duplicate && alreadyInTarget && (
+          <p className="mt-2 text-xs app-text-muted">
+            This candidate is already in the selected position.
+          </p>
+        )}
 
         <div className="mt-3">
           <Field label="Portfolio">
@@ -1145,12 +1262,14 @@ function CandidateEntry({
   position,
   directory,
   onAddExisting,
+  onOpenExisting,
   onCreate,
   onClose,
 }: {
   position: PositionCardType;
   directory?: DirectoryCandidate[];
   onAddExisting?: (candidate: CandidateMini) => void;
+  onOpenExisting?: (entry: DirectoryCandidate) => void;
   onCreate: (payload: NewCandidatePayload) => void;
   onClose: () => void;
 }) {
@@ -1195,6 +1314,17 @@ function CandidateEntry({
       ) : (
         <CandidateForm
           initialRole={position.title}
+          directory={directory}
+          currentPositionId={position.id}
+          onOpenExisting={onOpenExisting}
+          onAddExisting={
+            onAddExisting
+              ? (entry) => {
+                  onAddExisting(entry.candidate);
+                  onClose();
+                }
+              : undefined
+          }
           onCancel={onClose}
           onSubmit={(payload) => onCreate(payload)}
         />
@@ -1210,6 +1340,7 @@ export function CreateEntityModal({
   projects,
   existingCandidates,
   onAddExistingCandidate,
+  onOpenExistingCandidate,
   onClose,
   onCreateProject,
   onCreatePosition,
@@ -1311,6 +1442,17 @@ export function CreateEntityModal({
                     onAddExistingCandidate(project.id, position.id, candidate)
                 : undefined
             }
+            onOpenExisting={
+              onOpenExistingCandidate
+                ? (entry) => {
+                    const place = entry.positions[0];
+
+                    if (place) {
+                      onOpenExistingCandidate(place.projectId, place.positionId, entry.candidate.id);
+                    }
+                  }
+                : undefined
+            }
             onCreate={(payload) => {
               onCreateCandidate(project.id, position.id, payload);
               onClose();
@@ -1322,6 +1464,29 @@ export function CreateEntityModal({
         {mode === "candidate" && !position && projects && (
           <CandidateForm
             projects={projects}
+            directory={existingCandidates}
+            onOpenExisting={
+              onOpenExistingCandidate
+                ? (entry) => {
+                    const place = entry.positions[0];
+
+                    if (place) {
+                      onOpenExistingCandidate(place.projectId, place.positionId, entry.candidate.id);
+                    }
+                  }
+                : undefined
+            }
+            onAddExisting={
+              onAddExistingCandidate
+                ? (entry, target) => {
+                    if (target) {
+                      onAddExistingCandidate(target.projectId, target.positionId, entry.candidate);
+                    }
+
+                    onClose();
+                  }
+                : undefined
+            }
             onCancel={onClose}
             onSubmit={(payload, target) => {
               if (target) {

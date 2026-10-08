@@ -3,7 +3,7 @@ import type { CandidateMini, ProjectColumn } from "@/app/data/resourcePlanningMo
 export type DirectoryCandidate = {
   candidate: CandidateMini;
   // Dónde está hoy este candidato (proyecto · posición)
-  positions: Array<{ positionId: string; label: string }>;
+  positions: Array<{ projectId: string; positionId: string; label: string }>;
 };
 
 /** Candidatos únicos (por id) de todo el tablero, con las posiciones donde ya están. */
@@ -18,6 +18,7 @@ export function buildCandidateDirectory(
         const entry = byId.get(candidate.id) ?? { candidate, positions: [] };
 
         entry.positions.push({
+          projectId: project.id,
           positionId: position.id,
           label: `${project.projectName} · ${position.title}`,
         });
