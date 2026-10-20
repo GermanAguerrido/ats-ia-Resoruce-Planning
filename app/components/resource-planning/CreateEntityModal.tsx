@@ -16,6 +16,7 @@ import { findDuplicateCandidate, type DuplicateMatch } from "@/app/lib/duplicate
 import { fileToCoverDataUrl } from "@/app/lib/imageUtils";
 import { sanitizeRichHtml } from "@/app/lib/richText";
 import { SENIORITY_LEVELS } from "@/app/lib/candidateStatus";
+import { ENGLISH_LEVELS } from "@/app/lib/englishLevels";
 import { INTERNAL_USERS } from "@/app/lib/users";
 import { RichTextField } from "./RichTextField";
 import { UserAvatar } from "./UserAvatar";
@@ -100,15 +101,7 @@ type Props = {
 
 const OWNER_OPTIONS = INTERNAL_USERS;
 const SENIORITY_OPTIONS = ["JR", "SSR", "SR", "Lead"];
-const ENGLISH_OPTIONS = [
-  "",
-  "Basic",
-  "Basic / Intermediate",
-  "Intermediate",
-  "Intermediate / Advanced",
-  "Advanced",
-  "Native",
-];
+const ENGLISH_OPTIONS = ["", ...ENGLISH_LEVELS];
 
 const PRIORITY_OPTIONS: Array<{ value: ProjectPriority; label: string }> = [
   { value: "high", label: "High" },

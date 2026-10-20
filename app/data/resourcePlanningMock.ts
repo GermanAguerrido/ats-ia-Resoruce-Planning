@@ -90,6 +90,11 @@ export type CandidateMini = {
   // Recruiters adicionales (el owner es siempre recruiterOwner)
   coRecruiters?: string[];
   seniority?: string;
+  // Empresas donde trabajó antes (para filtrar por ex-empleados de competidoras)
+  previousCompanies?: string[];
+  // Pedido de "Recontact": quién lo pidió y cuándo (se apaga al registrar un contacto posterior)
+  recontactRequestedAt?: string;
+  recontactRequestedBy?: string;
   // true cuando el nivel fue validado en la entrevista técnica interna
   seniorityValidated?: boolean;
   techInterviewDoneAt?: string;
@@ -191,6 +196,7 @@ export const resourcePlanningMock: ProjectColumn[] = [
             workRelation: "Contractor",
             englishLevel: "Intermediate / Advanced",
             source: "LinkedIn",
+            previousCompanies: ["Termax", "Pixel Bay"],
             recruiterOwner: "Ana",
             lastContactAt: "2026-06-02",
             daysInProcess: 11,
@@ -370,6 +376,7 @@ export const resourcePlanningMock: ProjectColumn[] = [
             workRelation: "Contractor",
             englishLevel: "Advanced",
             source: "LinkedIn",
+            previousCompanies: ["Starforge"],
             recruiterOwner: "Sofía",
             lastContactAt: "2026-06-01",
             daysInProcess: 18,

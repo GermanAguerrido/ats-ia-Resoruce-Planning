@@ -2,9 +2,17 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { useCurrentUser } from "../../lib/currentUser";
 import { ThemeToggle } from "./ThemeToggle";
 
-const menuItems = [
+type MenuItem = {
+  label: string;
+  href: string;
+  // Solo se muestra a Talent y Admin (no a recruiters)
+  talentOnly?: boolean;
+};
+
+const menuItems: MenuItem[] = [
   {
     label: "Dashboard",
     href: "/",
@@ -17,10 +25,25 @@ const menuItems = [
     label: "Resource Planning",
     href: "/jobs",
   },
+  {
+    label: "AI Match",
+    href: "/ai-match",
+    talentOnly: true,
+  },
+  {
+    label: "Budget",
+    href: "/budget",
+    talentOnly: true,
+  },
 ];
 
 export function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
+  const { role } = useCurrentUser();
+
+  const visibleItems = menuItems.filter(
+    (item) => !item.talentOnly || role === "talent" || role === "admin"
+  );
 
   return (
     <>
@@ -54,7 +77,7 @@ export function Sidebar() {
         <ThemeToggle />
 
         <nav className="space-y-2">
-          {menuItems.map((item) => (
+          {visibleItems.map((item) => (
             <Link
               key={item.label}
               href={item.href}

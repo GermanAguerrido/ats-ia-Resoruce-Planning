@@ -1,44 +1,41 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
-import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Plus } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Plus, Search } from "lucide-react";
 import { ResourcePlanningDetailModal } from "../components/resource-planning/ResourcePlanningDetailModal";
 import { CreateEntityModal } from "../components/resource-planning/CreateEntityModal";
-import { useBoardState } from "../hooks/useBoardState";
 import {
-  AGING_DAYS,
-  PROCESS_FLOW,
-  PROCESS_OUTCOMES,
-  PROCESS_STATUS_INFO,
-  RESUME_STATUS_INFO,
-  getDaysInProcess,
-  isHiredCandidate,
-  isInProcessCandidate,
-} from "../lib/candidateStatus";
+  CandidatesCollection,
+  type CandidatesView,
+  type SortKey,
+  type SortState,
+} from "../components/candidates/CandidatesCollection";
+import { CandidatesStyles } from "../components/candidates/CandidatesStyles";
+import { PAGE_SIZES, Pagination } from "../components/candidates/Pagination";
+import { RecontactDialog } from "../components/candidates/RecontactDialog";
+import { RoleDemandPanel } from "../components/candidates/RoleDemandPanel";
+import { StudioLogo } from "../components/candidates/StudioLogo";
+import { useBoardState } from "../hooks/useBoardState";
+import { appendActivityLog } from "../lib/activityLog";
+import { useBudgetConfig } from "../lib/candidateBudget";
+import {
+  buildCandidateRows,
+  isInternalRow,
+  rowSeniority,
+  type CandidateLink,
+  type CandidateRow,
+} from "../lib/candidateRows";
+import { buildNotesIndex } from "../lib/candidateSearch";
+import { PROCESS_FLOW, PROCESS_OUTCOMES, PROCESS_STATUS_INFO, seniorityRank } from "../lib/candidateStatus";
+import { COMPETITOR_COMPANIES, isCompetitor } from "../lib/companies";
+import { useCurrentUser } from "../lib/currentUser";
 import { buildCandidateDirectory } from "../lib/candidateDirectory";
-import type {
-  CandidateMini,
-  CandidateResumeStatus,
-  PositionCard,
-  ProjectColumn,
-} from "../data/resourcePlanningMock";
-
-type Tone = "violet" | "green" | "blue" | "amber" | "red" | "gray";
-
-type CandidateLink = {
-  project: ProjectColumn;
-  position: PositionCard;
-  candidate: CandidateMini;
-};
-
-type CandidateRow = {
-  id: string;
-  main: CandidateMini;
-  links: CandidateLink[];
-};
-
-type SortKey = "name" | "days" | "lastContact";
-type QuickFilter = "all" | "live" | "ready" | "aging" | "hired";
+import { ENGLISH_LEVELS, englishRank } from "../lib/englishLevels";
+import { pushNotification } from "../lib/notifications";
+import { buildRoleDemand } from "../lib/roleDemand";
+import { roleKey, SENIORITY_BANDS, bandIndex } from "../lib/roles";
+import { daysSince, getDaysInProcess } from "../lib/candidateStatus";
+import type { PositionCard, CandidateMini } from "../data/resourcePlanningMock";
 
 type ModalSession = {
   projectId: string;
@@ -52,260 +49,226 @@ type CreateTarget =
   | { kind: "candidate"; projectId: string; positionId: string }
   | null;
 
-const processLabels = PROCESS_STATUS_INFO;
-const resumeLabels = RESUME_STATUS_INFO;
-const processOrder = [...PROCESS_FLOW, ...PROCESS_OUTCOMES].map((item) => item.value);
+type Filters = {
+  status: string;
+  recruiter: string;
+  english: string;
+  seniority: string;
+  company: string;
+};
+
+const EMPTY_FILTERS: Filters = { status: "", recruiter: "", english: "", seniority: "", company: "" };
+const INTERNAL_STATUS = "__internal__";
+const ANY_COMPETITOR = "__competitor__";
+const VIEW_KEY = "ats-ia:resource-planning:candidates-view";
+const MAX_TABS = 12;
+
+const statusOptions = [...PROCESS_FLOW.filter((item) => item.value !== "hired"), ...PROCESS_OUTCOMES];
 
 const filterControlClass =
   "rounded-xl border px-3 py-2 text-sm outline-none transition focus:border-violet-500 app-input";
 
-function uniqueSorted(values: Array<string | undefined>) {
-  return Array.from(
-    new Set(values.filter((value): value is string => Boolean(value?.trim())))
-  ).sort((a, b) => a.localeCompare(b));
-}
+function compareRows(a: CandidateRow, b: CandidateRow, sort: SortState) {
+  const byName = a.main.name.localeCompare(b.main.name);
 
-const isHired = isHiredCandidate;
-const isInProcess = isInProcessCandidate;
+  if (sort.key === "default") {
+    return (
+      seniorityRank(rowSeniority(b)) - seniorityRank(rowSeniority(a)) ||
+      englishRank(b.main.englishLevel) - englishRank(a.main.englishLevel) ||
+      byName
+    );
+  }
 
-function isAging(candidate: CandidateMini) {
-  const days = getDaysInProcess(candidate);
+  let comparison = 0;
 
-  return isInProcess(candidate) && days !== null && days >= AGING_DAYS;
-}
+  if (sort.key === "name") comparison = byName;
+  else if (sort.key === "seniority")
+    comparison = seniorityRank(rowSeniority(a)) - seniorityRank(rowSeniority(b));
+  else if (sort.key === "english")
+    comparison = englishRank(a.main.englishLevel) - englishRank(b.main.englishLevel);
+  else if (sort.key === "days")
+    comparison = (getDaysInProcess(a.main) ?? -1) - (getDaysInProcess(b.main) ?? -1);
+  else comparison = (daysSince(b.main.lastContactAt) ?? -1) - (daysSince(a.main.lastContactAt) ?? -1);
 
-function getInitials(name: string) {
-  return name
-    .split(" ")
-    .filter(Boolean)
-    .map((part) => part[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-}
-
-function CandidatesStyles() {
-  return (
-    <style>{`
-      .cd-tag {
-        display: inline-block; white-space: nowrap; border-radius: 9999px;
-        border: 1px solid; padding: 3px 10px; font-size: 11px; font-weight: 700;
-      }
-      .cd-tag-violet { background: rgba(124,58,237,.12); border-color: rgba(124,58,237,.4); color: #6d28d9; }
-      .cd-tag-green  { background: rgba(34,197,94,.14);  border-color: rgba(34,197,94,.45);  color: #15803d; }
-      .cd-tag-blue   { background: rgba(59,130,246,.12); border-color: rgba(59,130,246,.4);  color: #1d4ed8; }
-      .cd-tag-amber  { background: rgba(245,158,11,.16); border-color: rgba(245,158,11,.45); color: #b45309; }
-      .cd-tag-red    { background: rgba(239,68,68,.12);  border-color: rgba(239,68,68,.4);   color: #b91c1c; }
-      .cd-tag-gray   { background: rgba(113,113,122,.12); border-color: rgba(113,113,122,.35); color: #52525b; }
-      html[data-theme="dark"] .cd-tag-violet { background: rgba(124,58,237,.18); border-color: rgba(124,58,237,.5); color: #c4b5fd; }
-      html[data-theme="dark"] .cd-tag-green  { background: rgba(34,197,94,.16);  border-color: rgba(34,197,94,.45);  color: #86efac; }
-      html[data-theme="dark"] .cd-tag-blue   { background: rgba(59,130,246,.16); border-color: rgba(59,130,246,.45); color: #93c5fd; }
-      html[data-theme="dark"] .cd-tag-amber  { background: rgba(245,158,11,.16); border-color: rgba(245,158,11,.45); color: #fcd34d; }
-      html[data-theme="dark"] .cd-tag-red    { background: rgba(239,68,68,.16);  border-color: rgba(239,68,68,.45);  color: #fca5a5; }
-      html[data-theme="dark"] .cd-tag-gray   { background: rgba(161,161,170,.12); border-color: rgba(161,161,170,.3); color: #d4d4d8; }
-      .cd-aging { color: #d97706; font-weight: 700; }
-      html[data-theme="dark"] .cd-aging { color: #fbbf24; }
-      .cd-pill {
-        display: inline-block; border: 1px solid var(--app-border); border-radius: 9999px;
-        background: var(--app-surface-muted); padding: 3px 9px; font-size: 11px;
-        color: var(--app-text-secondary); white-space: nowrap;
-      }
-      .cd-pill:hover { border-color: #8b5cf6; color: var(--app-text-primary); }
-    `}</style>
-  );
-}
-
-function Tag({ tone, children }: { tone: Tone; children: ReactNode }) {
-  return <span className={`cd-tag cd-tag-${tone}`}>{children}</span>;
-}
-
-function SortHeader({
-  label,
-  sortKey,
-  activeKey,
-  direction,
-  onSort,
-}: {
-  label: string;
-  sortKey: SortKey;
-  activeKey: SortKey;
-  direction: 1 | -1;
-  onSort: (key: SortKey) => void;
-}) {
-  const isActive = activeKey === sortKey;
-  const Icon = !isActive ? ArrowUpDown : direction === 1 ? ArrowUp : ArrowDown;
-
-  return (
-    <th className="px-4 py-3">
-      <button
-        type="button"
-        onClick={() => onSort(sortKey)}
-        className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide hover:underline"
-      >
-        {label}
-        <Icon className="h-3 w-3" />
-      </button>
-    </th>
-  );
+  return comparison * sort.direction || byName;
 }
 
 export default function CandidatesPage() {
   const board = useBoardState();
   const { isLoaded, projectColumns, orderedProjects } = board;
+  const { user } = useCurrentUser();
+  const { config: budget } = useBudgetConfig();
 
   const [search, setSearch] = useState("");
-  const [projectFilter, setProjectFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [resumeFilter, setResumeFilter] = useState("");
-  const [recruiterFilter, setRecruiterFilter] = useState("");
-  const [englishFilter, setEnglishFilter] = useState("");
-  const [onlyInProcess, setOnlyInProcess] = useState(false);
-  const [quickFilter, setQuickFilter] = useState<QuickFilter>("all");
-  const [sort, setSort] = useState<{ key: SortKey; direction: 1 | -1 }>({
-    key: "lastContact",
-    direction: -1,
-  });
+  const [roleSel, setRoleSel] = useState("");
+  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [sort, setSort] = useState<SortState>({ key: "default", direction: -1 });
+  const [view, setView] = useState<CandidatesView>("compact");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(PAGE_SIZES[1]);
+  const [notesVersion, setNotesVersion] = useState(0);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const [modalSession, setModalSession] = useState<ModalSession | null>(null);
   const [createTarget, setCreateTarget] = useState<CreateTarget>(null);
+  const [recontactRow, setRecontactRow] = useState<CandidateRow | null>(null);
 
-  // Una fila por candidato; si está en varias posiciones, junta todos sus vínculos.
-  const rows = useMemo(() => {
-    const byId = new Map<string, CandidateRow>();
+  // Vista elegida (se recuerda en este navegador)
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(VIEW_KEY);
 
-    orderedProjects.forEach((project) =>
-      project.positions.forEach((position) =>
-        position.candidates.forEach((candidate) => {
-          const link: CandidateLink = { project, position, candidate };
-          const existing = byId.get(candidate.id);
+      if (stored === "compact" || stored === "agile" || stored === "full") {
+        setView(stored);
+      }
+    } catch {
+      // Local storage can fail in private browsing or quota situations.
+    }
+  }, []);
 
-          if (existing) {
-            existing.links.push(link);
-          } else {
-            byId.set(candidate.id, { id: candidate.id, main: candidate, links: [link] });
-          }
-        })
-      )
-    );
+  const changeView = (next: CandidatesView) => {
+    setView(next);
 
-    return Array.from(byId.values());
-  }, [orderedProjects]);
+    try {
+      window.localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      // Local storage can fail in private browsing or quota situations.
+    }
+  };
+
+  // Si otra pestaña cambia notas, se actualiza la búsqueda por notas
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key && event.key.startsWith("rp-notes:")) {
+        setNotesVersion((current) => current + 1);
+      }
+    };
+
+    window.addEventListener("storage", onStorage);
+
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  // Aviso cuando los datos se actualizaron desde otra pestaña
+  useEffect(() => {
+    if (board.remoteSyncAt) {
+      setNotice("Updated with changes made in another tab.");
+    }
+  }, [board.remoteSyncAt]);
+
+  useEffect(() => {
+    if (!notice) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setNotice(null), 4000);
+
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  const allRows = useMemo(() => buildCandidateRows(orderedProjects), [orderedProjects]);
+
+  const notes = useMemo(
+    () => buildNotesIndex(allRows.map((row) => row.main)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allRows, notesVersion]
+  );
+
+  // Contratados: pasan a Internal y no aparecen en la base salvo que se pidan
+  const internalCount = useMemo(() => allRows.filter(isInternalRow).length, [allRows]);
+
+  const baseRows = useMemo(() => allRows.filter((row) => !isInternalRow(row)), [allRows]);
+
+  const demand = useMemo(
+    () =>
+      buildRoleDemand(
+        baseRows.map((row) => ({ role: row.main.role, seniority: rowSeniority(row) })),
+        orderedProjects
+      ),
+    [baseRows, orderedProjects]
+  );
+
+  // Pestañas por rol (como las hojas de un Excel)
+  const roleTabs = useMemo(() => demand.filter((item) => item.total > 0), [demand]);
 
   const recruiterOptions = useMemo(
-    () => uniqueSorted(rows.map((row) => row.main.recruiterOwner)),
-    [rows]
+    () =>
+      Array.from(
+        new Set(allRows.map((row) => row.main.recruiterOwner).filter((v): v is string => Boolean(v)))
+      ).sort((a, b) => a.localeCompare(b)),
+    [allRows]
   );
 
-  const englishOptions = useMemo(
-    () => uniqueSorted(rows.map((row) => row.main.englishLevel)),
-    [rows]
-  );
-
-  const quickCounts = useMemo(
-    () => ({
-      all: rows.length,
-      live: rows.filter((row) => isInProcess(row.main)).length,
-      ready: rows.filter(
-        (row) => isInProcess(row.main) && row.main.resumeStatus === "resume_ready"
-      ).length,
-      aging: rows.filter((row) => isAging(row.main)).length,
-      hired: rows.filter((row) => isHired(row.main)).length,
-    }),
-    [rows]
+  const companyOptions = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...COMPETITOR_COMPANIES,
+          ...allRows.flatMap((row) => row.main.previousCompanies ?? []),
+        ])
+      ).sort((a, b) => a.localeCompare(b)),
+    [allRows]
   );
 
   const visibleRows = useMemo(() => {
     const term = search.trim().toLowerCase();
+    const showInternal = filters.status === INTERNAL_STATUS;
 
-    const filtered = rows.filter((row) => {
-      const candidate = row.main;
+    return (showInternal ? allRows.filter(isInternalRow) : baseRows)
+      .filter((row) => {
+        const candidate = row.main;
 
-      if (term) {
-        const haystack = [
-          candidate.name,
-          candidate.role,
-          candidate.location,
-          ...row.links.flatMap((link) => [
-            link.project.projectName,
-            link.project.clientName,
-            link.position.title,
-          ]),
-        ]
-          .join(" ")
-          .toLowerCase();
+        if (roleSel && roleKey(candidate.role) !== roleSel) return false;
 
-        if (!haystack.includes(term)) return false;
-      }
+        if (term) {
+          const haystack = `${candidate.name} ${candidate.role} ${notes.get(row.id) ?? ""}`.toLowerCase();
 
-      if (projectFilter && !row.links.some((link) => link.project.id === projectFilter)) {
-        return false;
-      }
-      if (statusFilter && candidate.processStatus !== statusFilter) return false;
-      if (resumeFilter && candidate.resumeStatus !== resumeFilter) return false;
-      if (recruiterFilter && candidate.recruiterOwner !== recruiterFilter) return false;
-      if (englishFilter && candidate.englishLevel !== englishFilter) return false;
-      if (onlyInProcess && !isInProcess(candidate)) return false;
+          if (!haystack.includes(term)) return false;
+        }
 
-      if (quickFilter === "live" && !isInProcess(candidate)) return false;
-      if (
-        quickFilter === "ready" &&
-        !(isInProcess(candidate) && candidate.resumeStatus === "resume_ready")
-      ) {
-        return false;
-      }
-      if (quickFilter === "aging" && !isAging(candidate)) return false;
-      if (quickFilter === "hired" && !isHired(candidate)) return false;
+        if (filters.status && !showInternal && candidate.processStatus !== filters.status) return false;
+        if (filters.recruiter && candidate.recruiterOwner !== filters.recruiter) return false;
+        if (filters.english && candidate.englishLevel !== filters.english) return false;
+        if (filters.seniority && SENIORITY_BANDS[bandIndex(rowSeniority(row))] !== filters.seniority)
+          return false;
 
-      return true;
-    });
+        if (filters.company) {
+          const companies = candidate.previousCompanies ?? [];
 
-    return filtered.sort((a, b) => {
-      let comparison = 0;
+          if (filters.company === ANY_COMPETITOR) {
+            if (!companies.some(isCompetitor)) return false;
+          } else if (!companies.includes(filters.company)) {
+            return false;
+          }
+        }
 
-      if (sort.key === "name") {
-        comparison = a.main.name.localeCompare(b.main.name);
-      } else if (sort.key === "days") {
-        comparison = (getDaysInProcess(a.main) ?? -1) - (getDaysInProcess(b.main) ?? -1);
-      } else {
-        comparison = (a.main.lastContactAt ?? "").localeCompare(b.main.lastContactAt ?? "");
-      }
+        return true;
+      })
+      .sort((a, b) => compareRows(a, b, sort));
+  }, [allRows, baseRows, notes, roleSel, search, filters, sort]);
 
-      return comparison * sort.direction;
-    });
-  }, [
-    rows,
-    search,
-    projectFilter,
-    statusFilter,
-    resumeFilter,
-    recruiterFilter,
-    englishFilter,
-    onlyInProcess,
-    quickFilter,
-    sort,
-  ]);
+  // Volver a la primera página cuando cambia la búsqueda o un filtro
+  useEffect(() => {
+    setPage(1);
+  }, [search, roleSel, filters, sort, pageSize]);
+
+  const pages = Math.max(1, Math.ceil(visibleRows.length / pageSize));
+  const safePage = Math.min(page, pages);
+  const pageRows = visibleRows.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   const hasActiveFilters = Boolean(
-    search ||
-      projectFilter ||
-      statusFilter ||
-      resumeFilter ||
-      recruiterFilter ||
-      englishFilter ||
-      onlyInProcess ||
-      quickFilter !== "all"
+    search || roleSel || Object.values(filters).some(Boolean) || sort.key !== "default"
   );
 
   const clearFilters = () => {
     setSearch("");
-    setProjectFilter("");
-    setStatusFilter("");
-    setResumeFilter("");
-    setRecruiterFilter("");
-    setEnglishFilter("");
-    setOnlyInProcess(false);
-    setQuickFilter("all");
+    setRoleSel("");
+    setFilters(EMPTY_FILTERS);
+    setSort({ key: "default", direction: -1 });
   };
+
+  const setFilter = (key: keyof Filters, value: string) =>
+    setFilters((current) => ({ ...current, [key]: value }));
 
   const handleSort = (key: SortKey) => {
     setSort((current) =>
@@ -315,12 +278,62 @@ export default function CandidatesPage() {
     );
   };
 
-  const openCandidate = (link: CandidateLink) => {
+  const openLink = (link: CandidateLink) => {
     setModalSession({
       projectId: link.project.id,
       initialPosition: link.position,
       initialCandidate: link.candidate,
     });
+  };
+
+  // Enlace directo a una persona: /candidates?open=<id> (sirve para abrirla en otra pestaña)
+  useEffect(() => {
+    if (!isLoaded || modalSession) {
+      return;
+    }
+
+    const wanted = new URLSearchParams(window.location.search).get("open");
+    const row = wanted ? allRows.find((item) => item.id === wanted) : undefined;
+
+    if (row) {
+      openLink(row.links[0]);
+    }
+    // Solo al cargar
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoaded]);
+
+  const requestRecontact = (row: CandidateRow, message: string) => {
+    const link = row.links[0];
+    const recruiter = row.main.recruiterOwner;
+
+    if (!recruiter) {
+      return;
+    }
+
+    board.updateCandidate(row.id, {
+      recontactRequestedAt: new Date().toISOString(),
+      recontactRequestedBy: user,
+    });
+
+    pushNotification({
+      to: recruiter,
+      from: user,
+      kind: "recontact",
+      text: `${user} asks you to recontact ${row.main.name}${message ? `: ${message}` : "."}`,
+      candidateId: row.id,
+      candidateName: row.main.name,
+      projectId: link.project.id,
+      positionId: link.position.id,
+    });
+
+    appendActivityLog(
+      `rp-activity:project:${link.project.id}:position:${link.position.id}:candidate:${row.id}`,
+      `Recontact requested to ${recruiter}${message ? `: ${message}` : ""}`,
+      { author: user, type: message ? "comment" : "action" }
+    );
+
+    setRecontactRow(null);
+    setNotice(`${recruiter} was notified.`);
   };
 
   const handleArchive = (projectId: string) => {
@@ -329,21 +342,18 @@ export default function CandidatesPage() {
   };
 
   const modalProject = modalSession
-    ? (projectColumns.find((project) => project.id === modalSession.projectId) ??
-      null)
+    ? (projectColumns.find((project) => project.id === modalSession.projectId) ?? null)
     : null;
 
   const createProjectTarget =
     createTarget && createTarget.kind !== "pool"
-      ? (projectColumns.find((project) => project.id === createTarget.projectId) ??
-        null)
+      ? (projectColumns.find((project) => project.id === createTarget.projectId) ?? null)
       : null;
 
   const createPositionTarget =
     createTarget && createTarget.kind === "candidate"
-      ? (createProjectTarget?.positions.find(
-          (position) => position.id === createTarget.positionId
-        ) ?? null)
+      ? (createProjectTarget?.positions.find((position) => position.id === createTarget.positionId) ??
+        null)
       : null;
 
   // Candidatos existentes (para buscarlos y sumarlos a una posición)
@@ -353,11 +363,7 @@ export default function CandidatesPage() {
   );
 
   // Abre la ficha de un candidato existente (por ejemplo desde el aviso de duplicado)
-  const openExistingCandidate = (
-    projectId: string,
-    positionId: string,
-    candidateId: string
-  ) => {
+  const openExistingCandidate = (projectId: string, positionId: string, candidateId: string) => {
     const project = projectColumns.find((item) => item.id === projectId);
     const position = project?.positions.find((item) => item.id === positionId);
     const candidate = position?.candidates.find((item) => item.id === candidateId);
@@ -370,314 +376,247 @@ export default function CandidatesPage() {
     setModalSession({ projectId, initialPosition: position, initialCandidate: candidate });
   };
 
-  const projectsWithPositions = orderedProjects.filter(
-    (project) => project.positions.length > 0
-  );
+  const projectsWithPositions = orderedProjects.filter((project) => project.positions.length > 0);
 
   if (!isLoaded) {
     return <div className="min-h-screen app-bg" />;
   }
 
-  const quickItems: Array<{ value: QuickFilter; label: string }> = [
-    { value: "all", label: "All" },
-    { value: "live", label: "In process" },
-    { value: "ready", label: "Ready to present" },
-    { value: "aging", label: "14+ days" },
-    { value: "hired", label: "Hired" },
+  const viewItems: Array<{ value: CandidatesView; label: string }> = [
+    { value: "compact", label: "Compact" },
+    { value: "agile", label: "Agile" },
+    { value: "full", label: "Full list" },
   ];
+
+  const tabsToShow = roleTabs.slice(0, MAX_TABS);
+  const selectedTabHidden = roleSel && !tabsToShow.some((item) => item.key === roleSel);
 
   return (
     <div className="min-h-screen app-bg px-8 py-8">
       <CandidatesStyles />
 
       <div className="mx-auto max-w-[1700px]">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-4xl font-bold app-text-primary">Candidates</h1>
+        <div className="flex items-center gap-4">
+          <StudioLogo />
 
-            <p className="mt-3 text-base app-text-secondary">
-              Everyone linked to a position in Resource Planning. One source of truth.
-            </p>
-          </div>
+          <h1 className="text-4xl font-bold app-text-primary">Candidates</h1>
 
           <button
             type="button"
             onClick={() => setCreateTarget({ kind: "pool" })}
             style={{ backgroundColor: "#7c3aed", color: "#ffffff" }}
-            className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition hover:opacity-90"
+            className="ml-auto inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition hover:opacity-90"
           >
             <Plus className="h-4 w-4" />
             Add candidate
           </button>
         </div>
 
-        <div className="mt-6 flex flex-wrap gap-3">
-          {quickItems.map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              onClick={() => setQuickFilter(item.value)}
-              className={`min-w-[150px] rounded-xl border px-4 py-2.5 text-left transition app-card ${
-                quickFilter === item.value
-                  ? "border-violet-500 bg-violet-500/10"
-                  : "app-border hover:border-violet-500/50"
-              }`}
-            >
-              <span className="block text-[11px] font-semibold uppercase tracking-wide app-text-muted">
-                {item.label}
-              </span>
-              <span className="mt-1 block text-2xl font-bold app-text-primary">
-                {quickCounts[item.value]}
-              </span>
-            </button>
-          ))}
-        </div>
+        {(
+          <>
+            <div className="mt-4">
+              <RoleDemandPanel demand={demand} selectedKey={roleSel} onSelect={setRoleSel} />
+            </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search by name, role, project, position or location..."
-            className={`${filterControlClass} min-w-[280px]`}
-          />
+            <div className="mt-4 flex gap-0.5 overflow-x-auto border-b app-border">
+              {[
+                { key: "", label: "All", count: baseRows.length },
+                ...tabsToShow.map((item) => ({ key: item.key, label: item.role, count: item.total })),
+                ...(selectedTabHidden
+                  ? [
+                      {
+                        key: roleSel,
+                        label: demand.find((item) => item.key === roleSel)?.role ?? roleSel,
+                        count: demand.find((item) => item.key === roleSel)?.total ?? 0,
+                      },
+                    ]
+                  : []),
+              ].map((tab) => (
+                <button
+                  key={tab.key || "all"}
+                  type="button"
+                  onClick={() => setRoleSel(tab.key)}
+                  className={`whitespace-nowrap border-b-2 px-4 py-2 text-sm font-semibold transition ${
+                    roleSel === tab.key
+                      ? "border-violet-500 text-violet-500"
+                      : "border-transparent app-text-muted hover:text-violet-400"
+                  }`}
+                >
+                  {tab.label}
+                  <span className="ml-1.5 text-xs font-normal app-text-muted">{tab.count}</span>
+                </button>
+              ))}
+            </div>
 
-          <select
-            value={projectFilter}
-            onChange={(event) => setProjectFilter(event.target.value)}
-            className={filterControlClass}
-          >
-            <option value="">All projects</option>
-            {orderedProjects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.projectName} · {project.clientName}
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value)}
-            className={filterControlClass}
-          >
-            <option value="">All statuses</option>
-            {processOrder.map((status) => (
-              <option key={status} value={status}>
-                {processLabels[status].label}
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={resumeFilter}
-            onChange={(event) => setResumeFilter(event.target.value)}
-            className={filterControlClass}
-          >
-            <option value="">All resumes</option>
-            {(Object.keys(resumeLabels) as CandidateResumeStatus[]).map((status) => (
-              <option key={status} value={status}>
-                {resumeLabels[status].label}
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={recruiterFilter}
-            onChange={(event) => setRecruiterFilter(event.target.value)}
-            className={filterControlClass}
-          >
-            <option value="">All recruiters</option>
-            {recruiterOptions.map((recruiter) => (
-              <option key={recruiter} value={recruiter}>
-                {recruiter}
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={englishFilter}
-            onChange={(event) => setEnglishFilter(event.target.value)}
-            className={filterControlClass}
-          >
-            <option value="">All English levels</option>
-            {englishOptions.map((level) => (
-              <option key={level} value={level}>
-                {level}
-              </option>
-            ))}
-          </select>
-
-          <label className="flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 app-border">
-            <input
-              type="checkbox"
-              checked={onlyInProcess}
-              onChange={(event) => setOnlyInProcess(event.target.checked)}
-              className="h-4 w-4 accent-violet-600"
-            />
-            <span className="text-sm app-text-secondary">Only in process</span>
-          </label>
-
-          {hasActiveFilters && (
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="rounded-xl border px-3 py-2 text-sm font-medium app-border app-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
-            >
-              Clear filters
-            </button>
-          )}
-
-          <span className="ml-auto text-sm app-text-muted">
-            {visibleRows.length} of {rows.length} candidates
-          </span>
-        </div>
-
-        <div className="mt-4 overflow-auto rounded-2xl border app-border app-card">
-          <table className="w-full min-w-[1250px] text-sm">
-            <thead className="app-table-header">
-              <tr className="text-left">
-                <SortHeader
-                  label="Candidate"
-                  sortKey="name"
-                  activeKey={sort.key}
-                  direction={sort.direction}
-                  onSort={handleSort}
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 app-text-muted" />
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search by name or keywords in HR notes…"
+                  className={`${filterControlClass} min-w-[320px] pl-9`}
                 />
-                {["Location", "Project · Position", "Process status", "Resume", "Talent type", "English", "Recruiter"].map(
-                  (label) => (
-                    <th
-                      key={label}
-                      className="whitespace-nowrap px-4 py-3 text-[11px] font-semibold uppercase tracking-wide"
-                    >
-                      {label}
-                    </th>
-                  )
-                )}
-                <SortHeader
-                  label="Days in process"
-                  sortKey="days"
-                  activeKey={sort.key}
-                  direction={sort.direction}
-                  onSort={handleSort}
-                />
-                <SortHeader
-                  label="Last contact"
-                  sortKey="lastContact"
-                  activeKey={sort.key}
-                  direction={sort.direction}
-                  onSort={handleSort}
-                />
-                <th className="whitespace-nowrap px-4 py-3 text-[11px] font-semibold uppercase tracking-wide">
-                  Expected salary
-                </th>
-              </tr>
-            </thead>
+              </div>
 
-            <tbody>
-              {visibleRows.map((row) => {
-                const candidate = row.main;
-                const process = processLabels[candidate.processStatus];
-                const resume = resumeLabels[candidate.resumeStatus];
-                const aging = isAging(candidate);
+              <select
+                value={filters.status}
+                onChange={(event) => setFilter("status", event.target.value)}
+                className={filterControlClass}
+              >
+                <option value="">All statuses</option>
+                {statusOptions.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {PROCESS_STATUS_INFO[item.value].label}
+                  </option>
+                ))}
+                <option value={INTERNAL_STATUS}>Internal (hired) · {internalCount}</option>
+              </select>
 
-                return (
-                  <tr
-                    key={row.id}
-                    onClick={() => openCandidate(row.links[0])}
-                    className="app-table-row cursor-pointer border-t app-border"
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="rp-avatar-badge flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold">
-                          {getInitials(candidate.name)}
-                        </div>
+              <select
+                value={filters.recruiter}
+                onChange={(event) => setFilter("recruiter", event.target.value)}
+                className={filterControlClass}
+              >
+                <option value="">All recruiters</option>
+                {recruiterOptions.map((recruiter) => (
+                  <option key={recruiter} value={recruiter}>
+                    {recruiter}
+                  </option>
+                ))}
+              </select>
 
-                        <div className="min-w-0">
-                          <p className="font-semibold app-text-primary">{candidate.name}</p>
-                          <p className="text-xs app-text-muted">{candidate.role}</p>
-                        </div>
-                      </div>
-                    </td>
+              <select
+                value={filters.english}
+                onChange={(event) => setFilter("english", event.target.value)}
+                className={filterControlClass}
+              >
+                <option value="">All English levels</option>
+                {ENGLISH_LEVELS.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </select>
 
-                    <td className="px-4 py-3 app-text-secondary">{candidate.location}</td>
+              <select
+                value={roleSel}
+                onChange={(event) => setRoleSel(event.target.value)}
+                className={filterControlClass}
+              >
+                <option value="">All positions</option>
+                {demand.map((item) => (
+                  <option key={item.key} value={item.key}>
+                    {item.role}
+                  </option>
+                ))}
+              </select>
 
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1.5">
-                        {row.links.map((link) => (
-                          <button
-                            key={`${link.project.id}-${link.position.id}`}
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              openCandidate(link);
-                            }}
-                            className="cd-pill"
-                            title="Open this candidate in this position"
-                          >
-                            {link.project.projectName} · {link.position.title} ·{" "}
-                            {link.position.seniority}
-                          </button>
-                        ))}
-                      </div>
-                    </td>
+              <select
+                value={filters.seniority}
+                onChange={(event) => setFilter("seniority", event.target.value)}
+                className={filterControlClass}
+              >
+                <option value="">All seniority</option>
+                {SENIORITY_BANDS.map((band) => (
+                  <option key={band} value={band}>
+                    {band}
+                  </option>
+                ))}
+              </select>
 
-                    <td className="px-4 py-3">
-                      <Tag tone={process.tone}>
-                        {process.label}
-                        {candidate.hiredAt && candidate.processStatus === "hired"
-                          ? ` · ${candidate.hiredAt}`
-                          : ""}
-                      </Tag>
-                    </td>
+              <select
+                value={filters.company}
+                onChange={(event) => setFilter("company", event.target.value)}
+                className={filterControlClass}
+              >
+                <option value="">Any previous company</option>
+                <option value={ANY_COMPETITOR}>Any competitor</option>
+                {companyOptions.map((company) => (
+                  <option key={company} value={company}>
+                    {isCompetitor(company) ? `ex-${company}` : company}
+                  </option>
+                ))}
+              </select>
 
-                    <td className="px-4 py-3">
-                      <Tag tone={resume.tone}>{resume.label}</Tag>
-                    </td>
-
-                    <td className="px-4 py-3">
-                      {candidate.talentType === "external" ? (
-                        <span className="app-text-muted">—</span>
-                      ) : (
-                        <Tag tone="violet">Internal</Tag>
-                      )}
-                    </td>
-
-                    <td className="px-4 py-3 app-text-secondary">
-                      {candidate.englishLevel || "—"}
-                    </td>
-
-                    <td className="px-4 py-3 app-text-secondary">
-                      {candidate.recruiterOwner || "—"}
-                    </td>
-
-                    <td className={`px-4 py-3 ${aging ? "cd-aging" : "app-text-primary"}`}>
-                      {aging && <AlertTriangle className="mr-1 inline h-3.5 w-3.5" />}
-                      {getDaysInProcess(candidate) ?? "—"}
-                    </td>
-
-                    <td className="px-4 py-3 app-text-secondary">
-                      {candidate.lastContactAt || "—"}
-                    </td>
-
-                    <td className="px-4 py-3 app-text-secondary">
-                      {candidate.salaryExpected || "—"}
-                    </td>
-                  </tr>
-                );
-              })}
-
-              {visibleRows.length === 0 && (
-                <tr>
-                  <td colSpan={11} className="px-4 py-12 text-center app-text-muted">
-                    {rows.length === 0
-                      ? "No candidates yet. Add one to a position to get started."
-                      : "No candidates match the current filters"}
-                  </td>
-                </tr>
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="rounded-xl border px-3 py-2 text-sm font-medium app-border app-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+                >
+                  Clear filters
+                </button>
               )}
-            </tbody>
-          </table>
-        </div>
+
+              <div className="ml-auto flex overflow-hidden rounded-xl border app-border">
+                {viewItems.map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    onClick={() => changeView(item.value)}
+                    className={`px-3 py-2 text-sm transition ${
+                      view === item.value
+                        ? "bg-violet-600 font-semibold text-white"
+                        : "app-text-secondary hover:bg-black/[0.04]"
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <p className="mb-2 mt-3 text-xs app-text-muted">
+              {sort.key === "default" ? (
+                <>
+                  Sorted by <b>seniority</b>, then <b>English</b> (high to low).{" "}
+                </>
+              ) : null}
+              {visibleRows.length} of {baseRows.length} candidates
+              {internalCount > 0 && filters.status !== INTERNAL_STATUS
+                ? ` · ${internalCount} hired are in Internal`
+                : ""}
+              .
+            </p>
+
+            <CandidatesCollection
+              rows={pageRows}
+              view={view}
+              query={search}
+              notes={notes}
+              budget={budget}
+              sort={sort}
+              onSort={handleSort}
+              onOpen={openLink}
+              onRecontact={setRecontactRow}
+            />
+
+            <Pagination
+              page={safePage}
+              pageSize={pageSize}
+              total={visibleRows.length}
+              onPage={setPage}
+              onPageSize={setPageSize}
+            />
+          </>
+        )}
       </div>
+
+      {notice && (
+        <div className="fixed bottom-5 left-1/2 z-[90] -translate-x-1/2 rounded-xl bg-zinc-900 px-4 py-2.5 text-sm text-white shadow-xl">
+          {notice}
+        </div>
+      )}
+
+      {recontactRow && (
+        <RecontactDialog
+          row={recontactRow}
+          requestedBy={user}
+          onClose={() => setRecontactRow(null)}
+          onConfirm={(message) => requestRecontact(recontactRow, message)}
+        />
+      )}
 
       {modalSession && modalProject && (
         <ResourcePlanningDetailModal
@@ -690,9 +629,7 @@ export default function CandidatesPage() {
           onPositionUpdate={board.updatePosition}
           onCandidateUpdate={board.updateCandidate}
           onProjectArchive={handleArchive}
-          onAddPosition={(project) =>
-            setCreateTarget({ kind: "position", projectId: project.id })
-          }
+          onAddPosition={(project) => setCreateTarget({ kind: "position", projectId: project.id })}
           onAddCandidate={(project, position) =>
             setCreateTarget({
               kind: "candidate",
@@ -728,22 +665,20 @@ export default function CandidatesPage() {
         />
       )}
 
-      {createTarget?.kind === "candidate" &&
-        createProjectTarget &&
-        createPositionTarget && (
-          <CreateEntityModal
-            mode="candidate"
-            project={createProjectTarget}
-            position={createPositionTarget}
-            onClose={() => setCreateTarget(null)}
-            onCreateProject={board.createProject}
-            onCreatePosition={board.createPosition}
-            onCreateCandidate={board.createCandidate}
-            existingCandidates={candidateDirectory}
-            onAddExistingCandidate={board.addExistingCandidate}
-            onOpenExistingCandidate={openExistingCandidate}
-          />
-        )}
+      {createTarget?.kind === "candidate" && createProjectTarget && createPositionTarget && (
+        <CreateEntityModal
+          mode="candidate"
+          project={createProjectTarget}
+          position={createPositionTarget}
+          onClose={() => setCreateTarget(null)}
+          onCreateProject={board.createProject}
+          onCreatePosition={board.createPosition}
+          onCreateCandidate={board.createCandidate}
+          existingCandidates={candidateDirectory}
+          onAddExistingCandidate={board.addExistingCandidate}
+          onOpenExistingCandidate={openExistingCandidate}
+        />
+      )}
     </div>
   );
 }

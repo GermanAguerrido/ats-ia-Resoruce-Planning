@@ -23,6 +23,7 @@ import {
 } from "@/app/lib/candidateStatus";
 import { richHtmlToPlainText } from "@/app/lib/richText";
 import {
+  BOARD_STORAGE_KEY,
   clearStoredBoard,
   readStoredBoard,
   writeStoredBoard,
@@ -87,6 +88,8 @@ export function useBoardState() {
   const [manualOrder, setManualOrder] = useState<string[]>([]);
   const [archivedIds, setArchivedIds] = useState<string[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  // Momento en que se recibieron cambios hechos en otra pestaña (para avisarlo en pantalla)
+  const [remoteSyncAt, setRemoteSyncAt] = useState<number | null>(null);
 
   // Cargar el estado guardado del tablero (orden, archivados, movimientos, altas)
   useEffect(() => {
@@ -100,6 +103,32 @@ export function useBoardState() {
     }
 
     setIsLoaded(true);
+  }, []);
+
+  // Trabajo en varias pestañas: cuando otra pestaña guarda el tablero, esta se actualiza sola
+  // para no pisar sus cambios con datos viejos.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== BOARD_STORAGE_KEY) {
+        return;
+      }
+
+      const stored = readStoredBoard();
+
+      if (!stored) {
+        return;
+      }
+
+      setProjectColumns(stored.projects);
+      setOrderMode(stored.orderMode);
+      setManualOrder(stored.manualOrder);
+      setArchivedIds(stored.archivedIds);
+      setRemoteSyncAt(Date.now());
+    };
+
+    window.addEventListener("storage", onStorage);
+
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   // Guardar el estado del tablero cada vez que cambia
@@ -583,6 +612,7 @@ export function useBoardState() {
 
   return {
     isLoaded,
+    remoteSyncAt,
     projectColumns,
     orderedProjects,
     archivedProjects,

@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Clock3,
   DollarSign,
+  ExternalLink,
   FileText,
   Flag,
   FlaskConical,
@@ -45,6 +46,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { addCompany, isCompetitor } from "@/app/lib/companies";
 import type {
   CandidateMini,
   CandidateProcessStatus,
@@ -1372,11 +1374,61 @@ export function ResourcePlanningDetailModal({
     commitActivities([nextActivity, ...localActivities]);
   };
 
+  // Al borrar un comentario queda un aviso con "Undo" unos segundos
+  const [undoDelete, setUndoDelete] = useState<{
+    activity: LocalActivity;
+    index: number;
+  } | null>(null);
+
   const deleteActivity = (activityId: string) => {
+    const index = localActivities.findIndex((activity) => activity.id === activityId);
+
+    if (index < 0) {
+      return;
+    }
+
+    setUndoDelete({ activity: localActivities[index], index });
     commitActivities(
       localActivities.filter((activity) => activity.id !== activityId)
     );
   };
+
+  const restoreDeletedActivity = () => {
+    if (!undoDelete) {
+      return;
+    }
+
+    const next = [...localActivities];
+
+    next.splice(Math.min(undoDelete.index, next.length), 0, undoDelete.activity);
+    commitActivities(next);
+    setUndoDelete(null);
+  };
+
+  useEffect(() => {
+    if (!undoDelete) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setUndoDelete(null), 8000);
+
+    return () => window.clearTimeout(timer);
+  }, [undoDelete]);
+
+  // Varias pestañas abiertas: los comentarios que se escriben en otra pestaña aparecen acá
+  useEffect(() => {
+    setUndoDelete(null);
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === activityStorageKey) {
+        setLocalActivities(readStoredActivities(activityStorageKey));
+      }
+    };
+
+    window.addEventListener("storage", onStorage);
+
+    return () => window.removeEventListener("storage", onStorage);
+  }, [activityStorageKey]);
 
   const toggleReaction = (activityId: string) => {
     commitActivities(
@@ -1778,6 +1830,19 @@ export function ResourcePlanningDetailModal({
               onChange={applyCandidateChange}
             />
           )}
+
+        {undoDelete && (
+          <div className="fixed bottom-5 left-1/2 z-[90] flex -translate-x-1/2 items-center gap-4 rounded-xl bg-zinc-900 px-4 py-2.5 text-sm text-white shadow-xl">
+            <span>Comment deleted</span>
+            <button
+              type="button"
+              onClick={restoreDeletedActivity}
+              className="font-bold text-violet-300 hover:underline"
+            >
+              Undo
+            </button>
+          </div>
+        )}
 
         {stageTarget && effectiveSelectedCandidate && effectiveSelectedPosition && (
           <StageTransitionDialog
@@ -2230,6 +2295,26 @@ function RichTextEditor({
     editor.innerHTML =
       storedContent ?? escapeHtml(initialText || "").replace(/\n/g, "<br>");
   }, [storageKey, initialText]);
+
+  // Varias pestañas: si otra pestaña guarda la nota, se actualiza acá (salvo que se esté escribiendo)
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      const editor = editorRef.current;
+
+      if (
+        event.key === storageKey &&
+        editor &&
+        document.activeElement !== editor &&
+        event.newValue !== null
+      ) {
+        editor.innerHTML = event.newValue;
+      }
+    };
+
+    window.addEventListener("storage", onStorage);
+
+    return () => window.removeEventListener("storage", onStorage);
+  }, [storageKey]);
 
   const persistContent = () => {
     const editor = editorRef.current;
@@ -4070,6 +4155,72 @@ function PersonalInfoRow({ icon, label, children }: PersonalInfoRowProps) {
   );
 }
 
+// Empresas donde trabajó antes. Las competidoras (por ejemplo Termax) se marcan con "ex-".
+function PreviousCompaniesField({
+  companies,
+  onChange,
+}: {
+  companies: string[];
+  onChange: (next: string[], activityText: string) => void;
+}) {
+  const [draft, setDraft] = useState("");
+
+  const add = () => {
+    const next = addCompany(companies, draft);
+
+    if (next !== companies) {
+      onChange(next, `Added previous company: ${draft.trim()}`);
+    }
+
+    setDraft("");
+  };
+
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-1.5">
+      {companies.map((company) => (
+        <span
+          key={company}
+          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+            isCompetitor(company)
+              ? "border-amber-500/50 bg-amber-500/15 text-amber-600"
+              : "app-border app-text-secondary"
+          }`}
+          title={isCompetitor(company) ? "Competitor" : undefined}
+        >
+          {isCompetitor(company) ? `ex-${company}` : company}
+          <button
+            type="button"
+            aria-label={`Remove ${company}`}
+            onClick={() =>
+              onChange(
+                companies.filter((item) => item !== company),
+                `Removed previous company: ${company}`
+              )
+            }
+            className="opacity-60 hover:opacity-100"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </span>
+      ))}
+
+      <input
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            add();
+          }
+        }}
+        onBlur={add}
+        placeholder="Add company…"
+        className="w-28 bg-transparent text-xs outline-none app-text-primary placeholder:text-zinc-400"
+      />
+    </div>
+  );
+}
+
 function NotDefined() {
   return <span className="app-text-muted">Not defined</span>;
 }
@@ -4163,7 +4314,24 @@ function CandidateDetailContent({
           <PersonalInfoRow icon={<MapPin />} label="Location">
             {candidate.location}
           </PersonalInfoRow>
+
+          <PersonalInfoRow icon={<Building2 />} label="Previous companies">
+            <PreviousCompaniesField
+              companies={candidate.previousCompanies ?? []}
+              onChange={(next, text) => onChange({ previousCompanies: next }, text)}
+            />
+          </PersonalInfoRow>
         </div>
+
+        <a
+          href={`/candidates?open=${encodeURIComponent(candidate.id)}`}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-500 hover:underline"
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+          Open this candidate in a new tab
+        </a>
       </section>
 
       <section>
