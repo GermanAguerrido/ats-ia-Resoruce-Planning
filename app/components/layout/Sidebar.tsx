@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useCurrentUser } from "../../lib/currentUser";
+import { countOpenTodos, useTodoItems } from "../../lib/todoItems";
+import { NotificationBell } from "../todo/NotificationBell";
 import { ThemeToggle } from "./ThemeToggle";
 
 type MenuItem = {
@@ -26,6 +28,10 @@ const menuItems: MenuItem[] = [
     href: "/jobs",
   },
   {
+    label: "To-Do",
+    href: "/todo",
+  },
+  {
     label: "AI Match",
     href: "/ai-match",
     talentOnly: true,
@@ -39,7 +45,8 @@ const menuItems: MenuItem[] = [
 
 export function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
-  const { role } = useCurrentUser();
+  const { user, role } = useCurrentUser();
+  const todoCount = countOpenTodos(useTodoItems(user, role, "mine"));
 
   const visibleItems = menuItems.filter(
     (item) => !item.talentOnly || role === "talent" || role === "admin"
@@ -88,10 +95,18 @@ export function Sidebar() {
               }}
             >
               {item.label}
+              {item.href === "/todo" && todoCount > 0 && (
+                <span className="ml-2 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                  {todoCount}
+                </span>
+              )}
             </Link>
           ))}
         </nav>
       </aside>
+
+      {/* Campanita de notificaciones: visible en todas las pantallas */}
+      <NotificationBell />
     </>
   );
 }

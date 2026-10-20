@@ -60,6 +60,8 @@ export function writeStoredBoard(board: StoredBoard) {
 
   try {
     window.localStorage.setItem(BOARD_STORAGE_KEY, JSON.stringify(board));
+    // Avisa a otras partes de esta misma pestaña (To-Do, campanita) que el tablero cambió
+    window.dispatchEvent(new Event("rp-board"));
   } catch {
     // Local storage can fail in private browsing or quota situations.
   }

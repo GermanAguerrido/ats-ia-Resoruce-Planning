@@ -32,6 +32,7 @@ import { useCurrentUser } from "../lib/currentUser";
 import { buildCandidateDirectory } from "../lib/candidateDirectory";
 import { ENGLISH_LEVELS, englishRank } from "../lib/englishLevels";
 import { pushNotification } from "../lib/notifications";
+import { useCoverageRatio } from "../lib/sourcingRule";
 import { buildRoleDemand } from "../lib/roleDemand";
 import { roleKey, SENIORITY_BANDS, bandIndex } from "../lib/roles";
 import { daysSince, getDaysInProcess } from "../lib/candidateStatus";
@@ -98,6 +99,7 @@ export default function CandidatesPage() {
   const { isLoaded, projectColumns, orderedProjects } = board;
   const { user } = useCurrentUser();
   const { config: budget } = useBudgetConfig();
+  const [coverageRatio] = useCoverageRatio();
 
   const [search, setSearch] = useState("");
   const [roleSel, setRoleSel] = useState("");
@@ -183,9 +185,10 @@ export default function CandidatesPage() {
     () =>
       buildRoleDemand(
         baseRows.map((row) => ({ role: row.main.role, seniority: rowSeniority(row) })),
-        orderedProjects
+        orderedProjects,
+        coverageRatio
       ),
-    [baseRows, orderedProjects]
+    [baseRows, orderedProjects, coverageRatio]
   );
 
   // Pestañas por rol (como las hojas de un Excel)
@@ -324,6 +327,8 @@ export default function CandidatesPage() {
       candidateName: row.main.name,
       projectId: link.project.id,
       positionId: link.position.id,
+      state: "pending",
+      href: `/candidates?open=${encodeURIComponent(row.id)}`,
     });
 
     appendActivityLog(
@@ -415,7 +420,12 @@ export default function CandidatesPage() {
         {(
           <>
             <div className="mt-4">
-              <RoleDemandPanel demand={demand} selectedKey={roleSel} onSelect={setRoleSel} />
+              <RoleDemandPanel
+                demand={demand}
+                selectedKey={roleSel}
+                ratio={coverageRatio}
+                onSelect={setRoleSel}
+              />
             </div>
 
             <div className="mt-4 flex gap-0.5 overflow-x-auto border-b app-border">

@@ -1,8 +1,10 @@
 import type { ProjectColumn } from "@/app/data/resourcePlanningMock";
 import { bandIndex, roleKey, SENIORITY_BANDS } from "./roles";
 
-// Cuántas personas queremos tener por cada puesto abierto para sentirnos cubiertos
-export const COVERAGE_RATIO = 3;
+import { DEFAULT_COVERAGE_RATIO } from "./sourcingRule";
+
+// Cuántas personas queremos tener por cada puesto abierto para sentirnos cubiertos (por defecto)
+export const COVERAGE_RATIO = DEFAULT_COVERAGE_RATIO;
 
 export type OpenDemand = {
   positionId: string;
@@ -33,7 +35,8 @@ export type DemandPerson = { role: string; seniority: string };
  */
 export function buildRoleDemand(
   people: DemandPerson[],
-  projects: ProjectColumn[]
+  projects: ProjectColumn[],
+  ratio: number = COVERAGE_RATIO
 ): RoleDemand[] {
   const roles = new Map<string, RoleDemand>();
   const spelling = new Map<string, Map<string, number>>();
@@ -114,7 +117,7 @@ export function buildRoleDemand(
           seniority: position.seniority,
           quantity,
           supply,
-          covered: supply >= quantity * COVERAGE_RATIO,
+          covered: supply >= quantity * ratio,
         });
       })
   );

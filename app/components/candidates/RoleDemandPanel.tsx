@@ -11,11 +11,12 @@ const VISIBLE_BY_DEFAULT = 8;
 type Props = {
   demand: RoleDemand[];
   selectedKey: string;
+  ratio?: number;
   onSelect: (key: string) => void;
 };
 
 /** Qué tenemos y qué nos falta: personas por rol y seniority frente a las posiciones abiertas. */
-export function RoleDemandPanel({ demand, selectedKey, onSelect }: Props) {
+export function RoleDemandPanel({ demand, selectedKey, ratio = COVERAGE_RATIO, onSelect }: Props) {
   const [showAll, setShowAll] = useState(false);
   const visible = showAll ? demand : demand.slice(0, VISIBLE_BY_DEFAULT);
 
@@ -84,7 +85,7 @@ export function RoleDemandPanel({ demand, selectedKey, onSelect }: Props) {
                 (uncovered.length > 0 ? (
                   <span
                     className="mt-2 inline-block rounded-md border border-red-500/40 px-1.5 text-[10px] font-bold text-red-500"
-                    title={`We aim for ${COVERAGE_RATIO} people per open position`}
+                    title={`We aim for ${ratio} people per open position`}
                   >
                     Gap · {item.open.length} open,{" "}
                     {uncovered.map((entry) => entry.seniority).join(", ")} short

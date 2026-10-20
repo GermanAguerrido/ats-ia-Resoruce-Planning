@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { MyTodoCard } from "./components/todo/MyTodoCard";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
@@ -469,49 +470,7 @@ export default function HomePage() {
 
         <div className="mt-4 grid gap-4 xl:grid-cols-[1.35fr_1fr]">
           <div className="space-y-4">
-            <Card title="Needs attention" count={metrics.attention.length}>
-              {visibleAttention.length > 0 ? (
-                visibleAttention.map((item) => (
-                  <div
-                    key={item.id}
-                    className="flex items-start gap-3 border-t px-5 py-3 app-border"
-                  >
-                    <div
-                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${toneClass[item.tone]}`}
-                    >
-                      {item.icon}
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold app-text-primary">
-                        {item.title}
-                      </p>
-                      <p className="mt-0.5 text-xs leading-5 app-text-secondary">
-                        {item.description}
-                      </p>
-                    </div>
-
-                    <Link
-                      href="/jobs"
-                      className="shrink-0 self-center text-xs text-violet-500 underline"
-                    >
-                      Open board
-                    </Link>
-                  </div>
-                ))
-              ) : (
-                <p className="border-t px-5 py-6 text-center text-sm app-border app-text-muted">
-                  Nothing needs attention right now.
-                </p>
-              )}
-
-              {metrics.attention.length > visibleAttention.length && (
-                <p className="border-t px-5 py-3 text-xs app-border app-text-muted">
-                  And {metrics.attention.length - visibleAttention.length} more on the
-                  board.
-                </p>
-              )}
-            </Card>
+            <MyTodoCard />
 
             <Card title="Projects overview" count={projects.length}>
               <div className="overflow-x-auto">

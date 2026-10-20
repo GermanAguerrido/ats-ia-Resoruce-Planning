@@ -18,6 +18,7 @@ import { buildStageChange, type StageMoveInput } from "@/app/lib/stageGates";
 import { buildCandidateDirectory } from "@/app/lib/candidateDirectory";
 import { findDuplicateCandidate } from "@/app/lib/duplicateCheck";
 import { addTechInterview } from "@/app/lib/techInterviews";
+import { pushNotification } from "@/app/lib/notifications";
 import {
   PROCESS_STATUS_INFO,
 } from "@/app/lib/candidateStatus";
@@ -259,6 +260,22 @@ export function useBoardState() {
       change.commentText,
       { author, type: "comment" }
     );
+
+    // Si lo mueve otra persona, el recruiter dueño del candidato recibe un aviso en la campanita
+    if (candidate.recruiterOwner && candidate.recruiterOwner !== author) {
+      pushNotification({
+        to: candidate.recruiterOwner,
+        from: author,
+        kind: "stage",
+        state: "info",
+        text: `${author} moved ${candidate.name} to ${PROCESS_STATUS_INFO[next].label} (${position.title}).`,
+        candidateId: candidate.id,
+        candidateName: candidate.name,
+        projectId,
+        positionId,
+        href: `/candidates?open=${encodeURIComponent(candidate.id)}`,
+      });
+    }
 
     return candidate;
   };

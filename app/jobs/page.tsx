@@ -111,6 +111,30 @@ export default function JobsPage() {
   const [modalSession, setModalSession] = useState<ModalSession | null>(null);
   const [createTarget, setCreateTarget] = useState<CreateTarget>(null);
 
+  // Enlaces directos (desde el To-Do): /jobs?position=<id> abre la posición
+  useEffect(() => {
+    if (!board.isLoaded) {
+      return;
+    }
+
+    const wanted = new URLSearchParams(window.location.search).get("position");
+
+    if (!wanted) {
+      return;
+    }
+
+    for (const project of board.projectColumns) {
+      const position = project.positions.find((item) => item.id === wanted);
+
+      if (position) {
+        setModalSession({ projectId: project.id, initialPosition: position, initialCandidate: null });
+        break;
+      }
+    }
+    // Solo al cargar
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [board.isLoaded]);
+
   // Filtros (selección múltiple: por defecto se ve todo)
   const [projectStatuses, setProjectStatuses] = useState<Set<ProjectStatus>>(
     () => new Set(ALL_PROJECT_STATUSES)
