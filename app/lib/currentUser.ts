@@ -2,29 +2,26 @@
 
 import { useEffect, useState } from "react";
 
-import { INTERNAL_USERS } from "./users";
+import { readUsers, touchUser } from "./userDirectory";
 
-export type UserRole = "admin" | "talent" | "recruiter";
-
-// Roles provisorios. Con el backend, el rol sale de la tabla de usuarios.
-// Germán es Talent; Ana y Sofía son recruiters. Para probar como admin se puede cambiar acá.
-export const USER_ROLES: Record<string, UserRole> = {
-  Ana: "recruiter",
-  Germán: "talent",
-  Sofía: "recruiter",
-};
+// it / hr / pm completan su paso del onboarding (sección F) y solo ven esa pantalla
+export type UserRole = "admin" | "talent" | "recruiter" | "consultora" | "it" | "hr" | "pm";
 
 export const ROLE_LABELS: Record<UserRole, string> = {
-  admin: "Admin",
+  admin: "Owner",
   talent: "Talent",
   recruiter: "Recruiter",
+  consultora: "Consultora",
+  it: "IT",
+  hr: "HR",
+  pm: "PM / Lead",
 };
 
 const CURRENT_USER_KEY = "ats-ia:resource-planning:current-user";
 const DEFAULT_USER = "Germán";
 
 export function getRoleOf(user: string): UserRole {
-  return USER_ROLES[user] ?? "recruiter";
+  return readUsers().find((item) => item.name === user)?.role ?? "recruiter";
 }
 
 /** Solo Talent y Admin pueden saltear etapas. */
@@ -37,6 +34,11 @@ export function canUndoMoves(role: UserRole) {
   return role === "talent" || role === "admin";
 }
 
+/** Solo Talent y Admin ven y editan tiempos por etapa, rendimiento de todo el equipo, etc. */
+export function isTalentOrAdmin(role: UserRole) {
+  return role === "talent" || role === "admin";
+}
+
 export function readCurrentUser(): string {
   if (typeof window === "undefined") {
     return DEFAULT_USER;
@@ -45,7 +47,10 @@ export function readCurrentUser(): string {
   try {
     const stored = window.localStorage.getItem(CURRENT_USER_KEY);
 
-    return stored && INTERNAL_USERS.includes(stored) ? stored : DEFAULT_USER;
+    const known = readUsers().find((item) => item.name === stored);
+
+    // Un usuario deshabilitado no puede ser el usuario activo
+    return stored && known && known.status !== "disabled" ? stored : DEFAULT_USER;
   } catch {
     return DEFAULT_USER;
   }
@@ -64,10 +69,12 @@ export function useCurrentUser() {
     const sync = () => setUserState(readCurrentUser());
 
     window.addEventListener("rp-current-user", sync);
+    window.addEventListener("rp-users", sync);
     window.addEventListener("storage", sync);
 
     return () => {
       window.removeEventListener("rp-current-user", sync);
+      window.removeEventListener("rp-users", sync);
       window.removeEventListener("storage", sync);
     };
   }, []);
@@ -79,6 +86,7 @@ export function useCurrentUser() {
       // Local storage can fail in private browsing or quota situations.
     }
 
+    touchUser(next);
     setUserState(next);
     window.dispatchEvent(new Event("rp-current-user"));
   };

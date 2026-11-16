@@ -1,117 +1,46 @@
 "use client";
 
-import Link from "next/link";
-import { MyTodoCard } from "./components/todo/MyTodoCard";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import {
-  AlertTriangle,
-  Archive,
-  CheckCircle2,
-  Inbox,
-  PauseCircle,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
 import {
   resourcePlanningMock,
-  type CandidateMini,
-  type CandidateProcessStatus,
-  type PositionCard,
   type ProjectColumn,
 } from "@/app/data/resourcePlanningMock";
 import { readStoredBoard } from "@/app/lib/boardStorage";
+import { getRoleOf, useCurrentUser } from "@/app/lib/currentUser";
+import { levelOf, usePermissions } from "@/app/lib/permissions";
 import {
-  AGING_DAYS,
-  getDaysInProcess,
-  isHiredCandidate,
-  isInProcessCandidate,
-} from "@/app/lib/candidateStatus";
+  buildRecruiterStats,
+  flattenCandidates,
+  requisitionAverage,
+  type MetricsPeriod,
+} from "@/app/lib/recruiterMetrics";
+import { useStageSla } from "@/app/lib/stageSla";
+import { getInternalUsers, useUsers } from "@/app/lib/userDirectory";
+import { MyMetricsSection } from "./components/dashboard/MyMetricsSection";
+import { NoAccessScreen } from "./components/dashboard/NoAccessScreen";
+import { OverviewSection, type ActivityEntry } from "./components/dashboard/OverviewSection";
+import { PerformanceSection } from "./components/dashboard/PerformanceSection";
+import { SlaSection } from "./components/dashboard/SlaSection";
+import { MyTodoCard } from "./components/todo/MyTodoCard";
+import { CurrentUserSwitcher } from "./components/resource-planning/CurrentUserSwitcher";
 
-type AttentionTone = "warning" | "danger" | "info" | "success";
+type Section = "overview" | "performance" | "mine" | "sla";
 
-type AttentionItem = {
-  id: string;
-  tone: AttentionTone;
-  icon: ReactNode;
-  title: string;
-  description: string;
+const SECTION_LABELS: Record<Section, string> = {
+  overview: "Overview",
+  performance: "Recruiter performance",
+  mine: "My metrics",
+  sla: "Stage times (SLA)",
 };
 
-type ActivityEntry = {
-  id: string;
-  initials: string;
-  text: string;
-  context: string;
-  createdAt: string;
+const SECTION_HINTS: Record<Section, string> = {
+  overview: "Every number is calculated from the Resource Planning board.",
+  performance:
+    "How each recruiter is doing: volume, by role, and time per stage against the expected range.",
+  mine: "Your own numbers: volume, time per stage against the expected range, and conversion.",
+  sla: "Expected time per stage (from the Recruiting process document). One table drives the alerts, the pipeline colors and the metrics.",
 };
-
-type CandidateRef = {
-  project: ProjectColumn;
-  position: PositionCard;
-  candidate: CandidateMini;
-};
-
-
-const pipelineStages: Array<{ value: CandidateProcessStatus; label: string }> = [
-  { value: "contacted", label: "Contacted" },
-  { value: "screening", label: "Interviewed" },
-  { value: "tech_interview", label: "Tech Interview" },
-  { value: "presented", label: "Presented" },
-  { value: "client_interview", label: "Client Tech Interview" },
-  { value: "to_offer", label: "To offer" },
-  { value: "offer", label: "Offered" },
-  { value: "hired", label: "Hired" },
-];
-
-const toneClass: Record<AttentionTone, string> = {
-  warning: "bg-amber-500/15 text-amber-500",
-  danger: "bg-red-500/15 text-red-500",
-  info: "bg-blue-500/15 text-blue-500",
-  success: "bg-emerald-500/15 text-emerald-500",
-};
-
-const priorityBadge: Record<ProjectColumn["priority"], { label: string; className: string }> = {
-  high: {
-    label: "High",
-    className: "border-red-500/60 bg-red-500/25",
-  },
-  medium: {
-    label: "Medium",
-    className: "border-yellow-500/60 bg-yellow-500/25",
-  },
-  low: {
-    label: "Low",
-    className: "border-green-500/60 bg-green-500/25",
-  },
-};
-
-const isHired = isHiredCandidate;
-const isInProcess = isInProcessCandidate;
-
-function pluralize(count: number, one: string, many: string) {
-  return `${count} ${count === 1 ? one : many}`;
-}
-
-function formatRelativeTime(isoDate: string) {
-  const timestamp = new Date(isoDate).getTime();
-
-  if (Number.isNaN(timestamp)) {
-    return "";
-  }
-
-  const minutes = Math.floor((Date.now() - timestamp) / 60000);
-
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return `${pluralize(minutes, "minute", "minutes")} ago`;
-
-  const hours = Math.floor(minutes / 60);
-
-  if (hours < 24) return `${pluralize(hours, "hour", "hours")} ago`;
-
-  const days = Math.floor(hours / 24);
-
-  if (days < 7) return `${pluralize(days, "day", "days")} ago`;
-
-  return new Date(timestamp).toLocaleDateString("es-AR");
-}
 
 // Lee los comentarios y acciones guardados por el modal de detalle
 function readRecentActivity(projects: ProjectColumn[]): ActivityEntry[] {
@@ -189,231 +118,86 @@ function readRecentActivity(projects: ProjectColumn[]): ActivityEntry[] {
     .slice(0, 6);
 }
 
-function Card({
-  title,
-  count,
-  children,
-}: {
-  title: string;
-  count?: string | number;
-  children: ReactNode;
-}) {
-  return (
-    <section className="overflow-hidden rounded-2xl border app-border app-card">
-      <div className="flex items-center justify-between px-5 pb-2 pt-4">
-        <h2 className="text-xs font-semibold uppercase tracking-wide app-text-muted">
-          {title}
-        </h2>
+function loadProjects(): ProjectColumn[] {
+  const stored = readStoredBoard();
 
-        {count !== undefined && (
-          <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-[11px] font-bold text-violet-500">
-            {count}
-          </span>
-        )}
-      </div>
-
-      {children}
-    </section>
-  );
+  return stored
+    ? stored.projects.filter((project) => !stored.archivedIds.includes(project.id))
+    : resourcePlanningMock;
 }
 
 export default function HomePage() {
+  const { user, role } = useCurrentUser();
+  const config = useStageSla();
+  const permissions = usePermissions();
+  const users = useUsers();
   const [projects, setProjects] = useState<ProjectColumn[]>(resourcePlanningMock);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [section, setSection] = useState<Section>("overview");
+  const [period, setPeriod] = useState<MetricsPeriod>("90d");
+  // Recruiter que Talent/Admin abre desde "Recruiter performance"
+  const [openRecruiter, setOpenRecruiter] = useState<string | null>(null);
 
-  useEffect(() => {
-    const stored = readStoredBoard();
-    const visibleProjects = stored
-      ? stored.projects.filter((project) => !stored.archivedIds.includes(project.id))
-      : resourcePlanningMock;
+  const refresh = useCallback(() => {
+    const visible = loadProjects();
 
-    setProjects(visibleProjects);
-    setActivity(readRecentActivity(visibleProjects));
-    setIsLoaded(true);
+    setProjects(visible);
+    setActivity(readRecentActivity(visible));
   }, []);
 
-  const metrics = useMemo(() => {
-    const candidates: CandidateRef[] = projects.flatMap((project) =>
-      project.positions.flatMap((position) =>
-        position.candidates.map((candidate) => ({ project, position, candidate }))
-      )
-    );
+  useEffect(() => {
+    refresh();
+    setIsLoaded(true);
 
-    const openPositions = projects.flatMap((project) =>
-      project.positions
-        .filter((position) => position.status === "open")
-        .map((position) => ({ project, position }))
-    );
+    // El tablero se actualiza en esta pestaña (rp-board) o en otra (storage)
+    window.addEventListener("rp-board", refresh);
+    window.addEventListener("storage", refresh);
 
-    const activeProjects = projects.filter(
-      (project) => project.status === "active_search"
-    );
-
-    const inProcess = candidates.filter((item) => isInProcess(item.candidate));
-
-    const ready = inProcess.filter(
-      (item) => item.candidate.resumeStatus === "resume_ready"
-    );
-
-    const requested = projects
-      .flatMap((project) => project.positions)
-      .filter((position) => position.status === "open" || position.status === "hired")
-      .reduce((total, position) => total + (position.quantity ?? 1), 0);
-
-    const hired = candidates.filter((item) => isHired(item.candidate)).length;
-
-    const attention: AttentionItem[] = [];
-
-    inProcess
-      .filter(
-        (item) => (getDaysInProcess(item.candidate) ?? 0) >= AGING_DAYS
-      )
-      .forEach((item) =>
-        attention.push({
-          id: `aging-${item.candidate.id}`,
-          tone: "warning",
-          icon: <AlertTriangle className="h-4 w-4" />,
-          title: `Aging alert · ${item.candidate.name}`,
-          description: `${getDaysInProcess(item.candidate)} days in process for ${item.position.title} · ${item.position.seniority} (${item.project.projectName}). Consider reviewing the next step.`,
-        })
-      );
-
-    projects.forEach((project) =>
-      project.positions
-        .filter((position) => position.status === "on_hold")
-        .forEach((position) =>
-          attention.push({
-            id: `hold-${position.id}`,
-            tone: "warning",
-            icon: <PauseCircle className="h-4 w-4" />,
-            title: `Position on hold · ${position.title} · ${position.seniority}`,
-            description: `${project.projectName} · ${project.clientName}. Review it with the client.`,
-          })
-        )
-    );
-
-    openPositions
-      .filter((item) => item.position.candidates.length === 0)
-      .forEach((item) =>
-        attention.push({
-          id: `empty-${item.position.id}`,
-          tone: "danger",
-          icon: <Inbox className="h-4 w-4" />,
-          title: `No candidates yet · ${item.position.title} · ${item.position.seniority}`,
-          description: `${item.project.projectName} has an open position with nobody linked.`,
-        })
-      );
-
-    activeProjects
-      .filter((project) => !project.positions.some((position) => position.status === "open"))
-      .forEach((project) =>
-        attention.push({
-          id: `no-open-${project.id}`,
-          tone: "danger",
-          icon: <Inbox className="h-4 w-4" />,
-          title: `No open positions · ${project.projectName}`,
-          description: "Marked as active search but nothing is open.",
-        })
-      );
-
-    projects
-      .filter((project) => project.status === "active_no_search")
-      .forEach((project) =>
-        attention.push({
-          id: `archive-${project.id}`,
-          tone: "info",
-          icon: <Archive className="h-4 w-4" />,
-          title: `Ready to archive · ${project.projectName}`,
-          description: `${project.clientName} has no open searches. You can archive it and keep its history.`,
-        })
-      );
-
-    ready.forEach((item) =>
-      attention.push({
-        id: `ready-${item.candidate.id}`,
-        tone: "success",
-        icon: <CheckCircle2 className="h-4 w-4" />,
-        title: `Ready to present · ${item.candidate.name}`,
-        description: `${item.position.title} · ${item.position.seniority} (${item.project.projectName}) has a resume ready.`,
-      })
-    );
-
-    const pipeline = pipelineStages.map((stage) => ({
-      ...stage,
-      count: candidates.filter(
-        (item) =>
-          (isHired(item.candidate) ? "hired" : item.candidate.processStatus) ===
-          stage.value
-      ).length,
-    }));
-
-    return {
-      candidates,
-      openPositions,
-      activeProjects,
-      inProcess,
-      ready,
-      requested,
-      hired,
-      attention,
-      pipeline,
+    return () => {
+      window.removeEventListener("rp-board", refresh);
+      window.removeEventListener("storage", refresh);
     };
-  }, [projects]);
+  }, [refresh]);
+
+  const recruiters = useMemo(
+    () => getInternalUsers(users).filter((name) => getRoleOf(name) === "recruiter"),
+    [users]
+  );
+
+  const stats = useMemo(
+    () => buildRecruiterStats(projects, recruiters, period, config),
+    [projects, recruiters, period, config]
+  );
+
+  const requisition = useMemo(() => requisitionAverage(projects), [projects]);
+  // Qué secciones ve cada rol sale de la matriz de permisos (sección D)
+  const level = (area: Parameters<typeof levelOf>[1]) => levelOf(role, area, permissions);
+  const talentView = level("dashboard_others") !== "none";
+  const slaLevel = level("dashboard_sla");
+  const sections: Section[] = [
+    ...(level("dashboard_overview") !== "none" ? (["overview"] as Section[]) : []),
+    ...(talentView ? (["performance"] as Section[]) : []),
+    ...(level("dashboard_mine") !== "none" ? (["mine"] as Section[]) : []),
+    ...(slaLevel !== "none" ? (["sla"] as Section[]) : []),
+  ];
+  const activeSection: Section = sections.includes(section) ? section : sections[0];
+
+  if (sections.length === 0) {
+    return <NoAccessScreen area="the Dashboard" />;
+  }
 
   if (!isLoaded) {
     return <div className="min-h-screen app-bg" />;
   }
 
-  const maxPipelineCount = Math.max(1, ...metrics.pipeline.map((stage) => stage.count));
-  const hiredPercent = Math.round(
-    (metrics.hired / Math.max(metrics.requested, 1)) * 100
-  );
-  const visibleAttention = metrics.attention.slice(0, 8);
-
-  const kpis: Array<{
-    label: string;
-    value: string | number;
-    detail: string;
-    accent: string;
-    progress?: number;
-  }> = [
-    {
-      label: "Active projects",
-      value: metrics.activeProjects.length,
-      detail: `${projects.length} in total`,
-      accent: "text-violet-500",
-    },
-    {
-      label: "Open positions",
-      value: metrics.openPositions.length,
-      detail: `across ${pluralize(
-        new Set(metrics.openPositions.map((item) => item.project.id)).size,
-        "project",
-        "projects"
-      )}`,
-      accent: "text-sky-500",
-    },
-    {
-      label: "Candidates in process",
-      value: metrics.inProcess.length,
-      detail: "not hired or rejected",
-      accent: "text-emerald-500",
-    },
-    {
-      label: "Ready to present",
-      value: metrics.ready.length,
-      detail: "resume ready, waiting for the client",
-      accent: "text-amber-500",
-    },
-    {
-      label: "Hired vs requested",
-      value: `${metrics.hired} / ${metrics.requested}`,
-      detail: "",
-      accent: "text-emerald-500",
-      progress: hiredPercent,
-    },
-  ];
+  // Dueña de las métricas que se muestran en "My metrics"
+  const metricsOwner = talentView ? (openRecruiter ?? recruiters[0]) : user;
+  const ownerStats =
+    stats.find((item) => item.name === metricsOwner) ??
+    buildRecruiterStats(projects, [metricsOwner], period, config)[0];
+  const otherStats = stats.find((item) => item.name !== metricsOwner);
+  const hasCandidates = flattenCandidates(projects).length > 0;
 
   return (
     <div className="min-h-screen app-bg px-8 py-8">
@@ -423,188 +207,122 @@ export default function HomePage() {
             <h1 className="text-4xl font-bold app-text-primary">Dashboard</h1>
 
             <p className="mt-3 text-lg app-text-secondary">
-              Recruiter Intelligence Overview
+              {talentView ? "Recruiter Intelligence Overview" : `Your numbers, ${user}`}
             </p>
 
-            <p className="mt-1.5 text-xs app-text-muted">
-              Every number is calculated from the Resource Planning board.
-            </p>
+            <p className="mt-1.5 text-xs app-text-muted">{SECTION_HINTS[activeSection]}</p>
           </div>
 
-          <img
-            src="/trick-studios-logo.png"
-            alt="Trick Studios"
-            className="h-12 w-auto"
-          />
+          <div className="flex flex-col items-end gap-3">
+            <img src="/trick-studios-logo.png" alt="Trick Studios" className="h-12 w-auto" />
+            <CurrentUserSwitcher />
+          </div>
         </div>
 
-        <div className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          {kpis.map((kpi) => (
-            <div
-              key={kpi.label}
-              className="rounded-2xl border p-5 shadow-sm app-border app-card"
+        <div className="mt-6 flex flex-wrap items-center gap-2">
+          {sections.map((key) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => {
+                setSection(key);
+
+                if (key !== "mine") {
+                  setOpenRecruiter(null);
+                }
+              }}
+              style={
+                activeSection === key
+                  ? { backgroundColor: "#7c3aed", color: "#ffffff", borderColor: "#7c3aed" }
+                  : undefined
+              }
+              className="rounded-xl border px-4 py-2 text-sm font-semibold app-border app-text-secondary hover:border-violet-500"
             >
-              <p className="text-xs font-semibold uppercase tracking-wide app-text-muted">
-                {kpi.label}
-              </p>
+              {SECTION_LABELS[key]}
+            </button>
+          ))}
 
-              <p className={`mt-3 text-4xl font-bold leading-none ${kpi.accent}`}>
-                {kpi.value}
-              </p>
+          {(activeSection === "mine" || activeSection === "performance") && (
+            <select
+              value={period}
+              onChange={(event) => setPeriod(event.target.value as MetricsPeriod)}
+              className="app-input ml-auto rounded-lg border px-3 py-2 text-sm outline-none"
+              aria-label="Period"
+            >
+              <option value="30d">Last 30 days</option>
+              <option value="90d">Last 90 days</option>
+              <option value="ytd">Year to date</option>
+            </select>
+          )}
+        </div>
 
-              {kpi.detail && (
-                <p className="mt-2 text-sm app-text-secondary">{kpi.detail}</p>
-              )}
+        <div className="mt-5">
+          {!hasCandidates && activeSection !== "sla" && (
+            <p className="mb-4 rounded-xl border px-4 py-3 text-sm app-border app-text-muted">
+              There are no candidates on the board yet, so the numbers are empty.
+            </p>
+          )}
 
-              {kpi.progress !== undefined && (
-                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
-                  <div
-                    className="h-full rounded-full bg-emerald-500"
-                    style={{ width: `${kpi.progress}%` }}
-                  />
+          {activeSection === "overview" && (
+            <OverviewSection projects={projects} config={config} activity={activity} />
+          )}
+
+          {activeSection === "performance" && (
+            <PerformanceSection
+              stats={stats}
+              config={config}
+              period={period}
+              requisition={requisition}
+              onOpen={(name) => {
+                setOpenRecruiter(name);
+                setSection("mine");
+              }}
+            />
+          )}
+
+          {activeSection === "mine" && ownerStats && (
+            <div className="space-y-4">
+              {!talentView && <MyTodoCard />}
+
+              {talentView && recruiters.length > 1 && (
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="app-text-muted">Recruiter:</span>
+                  {recruiters.map((name) => (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => setOpenRecruiter(name)}
+                      style={
+                        name === metricsOwner
+                          ? { backgroundColor: "#7c3aed", color: "#ffffff", borderColor: "#7c3aed" }
+                          : undefined
+                      }
+                      className="rounded-full border px-3 py-1 text-xs font-semibold app-border app-text-secondary"
+                    >
+                      {name}
+                    </button>
+                  ))}
                 </div>
               )}
+
+              <MyMetricsSection
+                stats={ownerStats}
+                other={talentView ? otherStats : undefined}
+                config={config}
+                isOwnView={!talentView}
+                onBack={
+                  talentView
+                    ? () => {
+                        setOpenRecruiter(null);
+                        setSection("performance");
+                      }
+                    : undefined
+                }
+              />
             </div>
-          ))}
-        </div>
+          )}
 
-        <div className="mt-4 grid gap-4 xl:grid-cols-[1.35fr_1fr]">
-          <div className="space-y-4">
-            <MyTodoCard />
-
-            <Card title="Projects overview" count={projects.length}>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-t text-left text-[11px] uppercase tracking-wide app-border app-text-muted">
-                      <th className="px-5 py-2 font-semibold">Project</th>
-                      <th className="px-5 py-2 font-semibold">Priority</th>
-                      <th className="px-5 py-2 font-semibold">Open</th>
-                      <th className="px-5 py-2 font-semibold">Candidates</th>
-                      <th className="px-5 py-2 font-semibold">Hired / requested</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {projects.map((project) => {
-                      const projectCandidates = project.positions.flatMap(
-                        (position) => position.candidates
-                      );
-                      const requested = project.positions
-                        .filter(
-                          (position) =>
-                            position.status === "open" || position.status === "hired"
-                        )
-                        .reduce((total, position) => total + (position.quantity ?? 1), 0);
-                      const hired = projectCandidates.filter(isHired).length;
-                      const percent = requested
-                        ? Math.min(100, Math.round((hired / requested) * 100))
-                        : 0;
-                      const priority = priorityBadge[project.priority];
-
-                      return (
-                        <tr key={project.id} className="border-t app-border">
-                          <td className="px-5 py-3">
-                            <p className="font-semibold app-text-primary">
-                              {project.projectName}
-                            </p>
-                            <p className="text-xs app-text-muted">{project.clientName}</p>
-                          </td>
-
-                          <td className="px-5 py-3">
-                            <span
-                              className={`inline-block rounded-full border px-2 py-0.5 text-[11px] font-bold app-text-primary ${priority.className}`}
-                            >
-                              {priority.label}
-                            </span>
-                          </td>
-
-                          <td className="px-5 py-3 app-text-primary">
-                            {
-                              project.positions.filter(
-                                (position) => position.status === "open"
-                              ).length
-                            }
-                          </td>
-
-                          <td className="px-5 py-3 app-text-primary">
-                            {projectCandidates.filter(isInProcess).length}
-                          </td>
-
-                          <td className="px-5 py-3">
-                            <div className="flex min-w-[130px] items-center gap-2">
-                              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
-                                <div
-                                  className="h-full rounded-full bg-emerald-500"
-                                  style={{ width: `${percent}%` }}
-                                />
-                              </div>
-
-                              <span className="whitespace-nowrap text-xs app-text-secondary">
-                                {hired} / {requested}
-                              </span>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-          </div>
-
-          <div className="space-y-4 self-start">
-            <Card title="Pipeline" count={pluralize(metrics.candidates.length, "candidate", "candidates")}>
-              <div className="px-5 pb-4 pt-1">
-                {metrics.pipeline.map((stage) => (
-                  <div
-                    key={stage.value}
-                    className="grid grid-cols-[120px_1fr_28px] items-center gap-3 py-1.5 text-sm"
-                  >
-                    <span className="app-text-secondary">{stage.label}</span>
-
-                    <div className="h-3 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
-                      <div
-                        className="h-full rounded-full bg-gradient-to-r from-violet-600 to-blue-500"
-                        style={{ width: `${(stage.count / maxPipelineCount) * 100}%` }}
-                      />
-                    </div>
-
-                    <span className="text-right font-bold app-text-primary">
-                      {stage.count}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </Card>
-
-            <Card title="Recent activity" count={activity.length}>
-              {activity.length > 0 ? (
-                activity.map((entry) => (
-                  <div
-                    key={entry.id}
-                    className="flex items-start gap-3 border-t px-5 py-3 text-sm app-border"
-                  >
-                    <div className="rp-avatar-badge flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold">
-                      {entry.initials}
-                    </div>
-
-                    <div className="min-w-0">
-                      <p className="line-clamp-2 app-text-primary">{entry.text}</p>
-                      <p className="mt-0.5 text-xs app-text-muted">
-                        {entry.context} · {formatRelativeTime(entry.createdAt)}
-                      </p>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <p className="border-t px-5 py-6 text-center text-sm app-border app-text-muted">
-                  No activity yet. Comments and actions from the board show up here.
-                </p>
-              )}
-            </Card>
-          </div>
+          {activeSection === "sla" && <SlaSection config={config} readOnly={slaLevel !== "full"} />}
         </div>
       </div>
     </div>

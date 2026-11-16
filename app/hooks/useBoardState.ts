@@ -436,17 +436,28 @@ export function useBoardState() {
       seniority: optionalText(payload.seniority),
       stageHistory: [{ status: payload.processStatus, enteredAt: today }],
       processStartedAt: today,
-      lastContactAt: today,
+      // Si lo carga la consultora, todavía no hubo contacto del equipo interno (el primero prevalece)
+      lastContactAt: payload.consultora ? undefined : today,
+      ...(payload.consultora
+        ? {
+            consultora: payload.consultora,
+            consultoraLoadedAt: today,
+            source: payload.consultora,
+          }
+        : {}),
+      ...(payload.cvFile
+        ? { files: { cv: [{ id: `cv-${id}`, name: payload.cvFile.name, size: payload.cvFile.size }] } }
+        : {}),
       contactAttempts: 0,
       timeline: [
         {
           id: `timeline-${id}`,
-          title: "Candidate added",
+          title: payload.consultora ? `Loaded by ${payload.consultora}` : "Candidate added",
           description: position
             ? `Added to ${position.title} · ${position.seniority}.`
             : "Added to the process.",
           date: today,
-          author: payload.recruiterOwner,
+          author: payload.consultora ?? payload.recruiterOwner,
         },
       ],
     };

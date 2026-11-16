@@ -14,8 +14,6 @@ import {
   PROCESS_FLOW,
   PROCESS_OUTCOMES,
   PROCESS_STATUS_INFO,
-  STAGE_ALERT_DAYS,
-  STAGE_WARN_DAYS,
   getCurrentStageEntry,
   getDaysInCurrentStage,
   isInProcessCandidate,
@@ -24,6 +22,7 @@ import {
 import { formatPositionTarget } from "@/app/lib/positionTarget";
 import { canUndoMoves, useCurrentUser } from "@/app/lib/currentUser";
 import type { StageMoveInput } from "@/app/lib/stageGates";
+import { SLA_COLORS, stageSlaLevel, slaRangeOf } from "@/app/lib/stageSla";
 import { StageTransitionDialog } from "./StageTransitionDialog";
 import { UserAvatar } from "./UserAvatar";
 
@@ -113,10 +112,11 @@ function stageOf(candidate: CandidateMini): CandidateProcessStatus {
   return candidate.processStatus === "sourced" ? "contacted" : candidate.processStatus;
 }
 
-function daysColor(days: number) {
-  if (days >= STAGE_ALERT_DAYS) return "#ef4444";
-  if (days >= STAGE_WARN_DAYS) return "#f59e0b";
-  return "#64748b";
+// Semáforo según el tiempo esperado de la etapa (lib/stageSla): ámbar sobre el máximo, rojo sobre el doble
+function daysColor(status: CandidateProcessStatus, days: number) {
+  const level = stageSlaLevel(status, days);
+
+  return level && level !== "ok" ? SLA_COLORS[level] : "#64748b";
 }
 
 function formatSchedule(value: string) {
@@ -366,7 +366,11 @@ export function PipelineView({
           {active && days !== null && (
             <Chip
               tone={
-                days >= STAGE_ALERT_DAYS ? "red" : days >= STAGE_WARN_DAYS ? "amber" : "gray"
+                stageSlaLevel(candidate.processStatus, days) === "bad"
+                  ? "red"
+                  : stageSlaLevel(candidate.processStatus, days) === "warn"
+                    ? "amber"
+                    : "gray"
               }
               title="Days in this stage"
             >
@@ -384,7 +388,7 @@ export function PipelineView({
           )}
         </div>
 
-        {/* La barra se llena hasta el umbral de alerta de la etapa */}
+        {/* La barra se llena hasta el doble del máximo esperado de la etapa (rojo) */}
         {active && days !== null && (
           <div
             className="mt-2 h-1 overflow-hidden rounded-full"
@@ -393,8 +397,8 @@ export function PipelineView({
             <div
               className="h-full rounded-full"
               style={{
-                width: `${Math.min(days / STAGE_ALERT_DAYS, 1) * 100}%`,
-                backgroundColor: daysColor(days),
+                width: `${Math.min(days / ((slaRangeOf(candidate.processStatus)?.max ?? 7) * 2), 1) * 100}%`,
+                backgroundColor: daysColor(candidate.processStatus, days),
               }}
             />
           </div>

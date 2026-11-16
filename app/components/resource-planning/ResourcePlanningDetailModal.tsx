@@ -66,8 +66,6 @@ import {
   PROCESS_STATUS_INFO,
   RESUME_STATUS_INFO,
   SENIORITY_LEVELS,
-  STAGE_ALERT_DAYS,
-  STAGE_WARN_DAYS,
   appendStageEntry,
   daysSince,
   formatDateTime,
@@ -86,8 +84,13 @@ import {
 import { fileToCoverDataUrl } from "@/app/lib/imageUtils";
 import { handleRichPaste } from "@/app/lib/richText";
 import { formatPositionTarget } from "@/app/lib/positionTarget";
-import { INTERNAL_USERS, getUserInitials } from "@/app/lib/users";
+import { getUserInitials } from "@/app/lib/users";
+import { getInternalUsers } from "@/app/lib/userDirectory";
 import { useCurrentUser } from "@/app/lib/currentUser";
+import { slaRangeOf, stageSlaLevel } from "@/app/lib/stageSla";
+import { isRecontactOpen, isRecruiterOf } from "@/app/lib/recontact";
+import { closeRecontactRequests, pushNotification } from "@/app/lib/notifications";
+import { RecontactRequestDialog } from "./RecontactRequestDialog";
 import { buildStageChange, getHireMetrics, type StageMoveInput } from "@/app/lib/stageGates";
 import { addTechInterview } from "@/app/lib/techInterviews";
 import { StageTransitionDialog } from "./StageTransitionDialog";
@@ -174,6 +177,7 @@ type QuickActionId =
   | "log_contact"
   | "record_tech_interview"
   | "add_recruiter"
+  | "request_recontact"
   | "change_position_status"
   | "assign_internal_member"
   | "request_more_candidates"
@@ -399,6 +403,9 @@ function getCandidateInsights(
   const stageDays = getDaysInCurrentStage(candidate);
   const stageEntry = getCurrentStageEntry(candidate);
   const stageLabel = PROCESS_STATUS_INFO[candidate.processStatus].label;
+  // Semáforo según el tiempo esperado de la etapa (lib/stageSla)
+  const stageLevel = stageDays !== null ? stageSlaLevel(candidate.processStatus, stageDays) : null;
+  const stageMax = slaRangeOf(candidate.processStatus)?.max;
 
   if (ndaApplies && active) {
     const nda = candidate.ndaStatus ?? "required";
@@ -420,11 +427,11 @@ function getCandidateInsights(
     }
   }
 
-  if (active && stageDays !== null && stageDays >= STAGE_ALERT_DAYS) {
+  if (active && stageDays !== null && stageLevel && stageLevel !== "ok") {
     insights.push({
       id: "stage-stuck",
       title: `Stuck in ${stageLabel}`,
-      description: `${stageDays} days in this stage. Check what is blocking the process.`,
+      description: `${stageDays} days in this stage${stageMax ? ` (expected up to ${stageMax})` : ""}. Check what is blocking the process.`,
       severity: "warning",
       icon: "clock",
     });
@@ -452,7 +459,7 @@ function getCandidateInsights(
     active &&
     daysInProcess !== null &&
     daysInProcess >= AGING_DAYS &&
-    !(stageDays !== null && stageDays >= STAGE_ALERT_DAYS)
+    stageLevel !== "bad"
   ) {
     insights.push({
       id: "aging-alert",
@@ -676,14 +683,46 @@ function getQuickActionOptions(
   mode: "project" | "position" | "candidate",
   candidate: CandidateMini | null,
   position: PositionCardType | null,
-  project: ProjectColumnType
+  project: ProjectColumnType,
+  currentUser: string
 ): QuickActionOption[] {
   if (mode === "candidate" && candidate) {
+    // Pedir recontacto: cualquiera que no sea el owner ni un co-recruiter, y solo uno abierto a la vez
+    const recontact: QuickActionOption = isRecruiterOf(candidate, currentUser)
+      ? {
+          id: "request_recontact",
+          label: "Request recontact",
+          disabled: true,
+          hint: "You are this candidate's recruiter: use “Log contact”.",
+        }
+      : isRecontactOpen(candidate)
+        ? {
+            id: "request_recontact",
+            label: "Request recontact",
+            disabled: true,
+            hint: `Already requested${
+              candidate.recontactRequestedBy ? ` by ${candidate.recontactRequestedBy}` : ""
+            }.`,
+          }
+        : !candidate.recruiterOwner
+          ? {
+              id: "request_recontact",
+              label: "Request recontact",
+              disabled: true,
+              hint: "This candidate has no recruiter assigned yet.",
+            }
+          : {
+              id: "request_recontact",
+              label: "↻ Request recontact",
+              hint: `Ask ${candidate.recruiterOwner} to contact this person again.`,
+            };
+
     return [
       { id: "change_candidate_status", label: "Change candidate status" },
       { id: "log_contact", label: "Log contact" },
       { id: "record_tech_interview", label: "Record tech interview result" },
       { id: "add_recruiter", label: "Add recruiter" },
+      recontact,
     ];
   }
 
@@ -750,7 +789,6 @@ const priorityLabel: Record<ProjectPriority, string> = {
   low: "Low",
 };
 
-const OWNER_OPTIONS = INTERNAL_USERS;
 
 const SMALL_BUTTON_CLASS =
   "inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-semibold app-border app-text-secondary hover:bg-black/[0.04] dark:hover:bg-white/[0.06]";
@@ -1010,6 +1048,7 @@ export function ResourcePlanningDetailModal({
   const [candidateDialog, setCandidateDialog] = useState<
     "hire" | "contact" | "tech" | null
   >(null);
+  const [recontactOpen, setRecontactOpen] = useState(false);
   const [statusMenuSignal, setStatusMenuSignal] = useState(0);
   // Estado al que se quiere mover el candidato: abre el diálogo de requisitos
   const [stageTarget, setStageTarget] = useState<CandidateProcessStatus | null>(null);
@@ -1319,6 +1358,12 @@ export function ResourcePlanningDetailModal({
       return { activityText: "" };
     }
 
+    if (actionId === "request_recontact") {
+      setRecontactOpen(true);
+
+      return { activityText: "" };
+    }
+
     return {
       activityText: "Quick action executed locally.",
     };
@@ -1484,6 +1529,47 @@ export function ResourcePlanningDetailModal({
       timeline ? { ...updates, timeline } : updates
     );
     addActivity(activityText, "action");
+
+    // Al registrar un contacto se cierra el pedido de recontacto (campanita y To-Do)
+    if (updates.lastContactAt) {
+      closeRecontactRequests(effectiveSelectedCandidate.id);
+    }
+  };
+
+  // Pedido de recontacto desde Quick Actions: avisa a cada recruiter elegido
+  const confirmRecontactRequest = (recipients: string[], message: string) => {
+    if (!effectiveSelectedCandidate || !effectiveSelectedPosition || recipients.length === 0) {
+      return;
+    }
+
+    const candidate = effectiveSelectedCandidate;
+    const suffix = message ? `: ${message}` : ".";
+
+    recipients.forEach((recipient) =>
+      pushNotification({
+        to: recipient,
+        from: currentUser,
+        kind: "recontact",
+        text: `${currentUser} asks you to recontact ${candidate.name}${suffix}`,
+        candidateId: candidate.id,
+        candidateName: candidate.name,
+        projectId: effectiveProject.id,
+        positionId: effectiveSelectedPosition.id,
+        state: "pending",
+        href: `/candidates?open=${encodeURIComponent(candidate.id)}`,
+      })
+    );
+
+    applyCandidateChange(
+      { recontactRequestedAt: new Date().toISOString(), recontactRequestedBy: currentUser },
+      `Recontact requested to ${recipients.join(", ")}${suffix}`,
+      {
+        title: "Recontact requested",
+        description: `${currentUser} asked ${recipients.join(", ")} to recontact this candidate.`,
+      }
+    );
+
+    setRecontactOpen(false);
   };
 
   // Confirmación del diálogo de requisitos: guarda el cambio y deja el comentario automático
@@ -1565,7 +1651,8 @@ export function ResourcePlanningDetailModal({
     mode,
     effectiveSelectedCandidate,
     effectiveSelectedPosition,
-    effectiveProject
+    effectiveProject,
+    currentUser
   );
 
   const visibleActivities = [
@@ -1830,6 +1917,16 @@ export function ResourcePlanningDetailModal({
               onChange={applyCandidateChange}
             />
           )}
+
+        {recontactOpen && effectiveSelectedCandidate && effectiveSelectedPosition && (
+          <RecontactRequestDialog
+            candidate={effectiveSelectedCandidate}
+            context={`${effectiveSelectedPosition.title} · ${effectiveProject.projectName}`}
+            requestedBy={currentUser}
+            onClose={() => setRecontactOpen(false)}
+            onConfirm={confirmRecontactRequest}
+          />
+        )}
 
         {undoDelete && (
           <div className="fixed bottom-5 left-1/2 z-[90] flex -translate-x-1/2 items-center gap-4 rounded-xl bg-zinc-900 px-4 py-2.5 text-sm text-white shadow-xl">
@@ -2411,7 +2508,7 @@ function ProjectDetailContent({
   // El responsable ahora vive en el proyecto (info.owner es el valor guardado antes)
   const owner = project.owner ?? info.owner ?? "";
   const members = project.members ?? [];
-  const availableMembers = OWNER_OPTIONS.filter((user) => !members.includes(user));
+  const availableMembers = getInternalUsers().filter((user) => !members.includes(user));
 
   const handleCoverFile = async (file: File | undefined) => {
     if (!file) {
@@ -2601,7 +2698,7 @@ function ProjectDetailContent({
                 }
               >
                 <option value="">Not assigned</option>
-                {OWNER_OPTIONS.map((user) => (
+                {getInternalUsers().map((user) => (
                   <option key={user} value={user}>
                     {user}
                   </option>
@@ -2881,9 +2978,9 @@ function PositionDetailContent({
   const jdKey = `rp-jd:project:${project.id}:position:${position.id}`;
   const [jdFiles, setJdFiles] = useStoredState<ResourceFile[]>(`${jdKey}:files`, []);
 
-  const ownerOptions = OWNER_OPTIONS.includes(position.owner)
-    ? OWNER_OPTIONS
-    : [position.owner, ...OWNER_OPTIONS];
+  const ownerOptions = getInternalUsers().includes(position.owner)
+    ? getInternalUsers()
+    : [position.owner, ...getInternalUsers()];
 
   return (
     <div className="space-y-5">
@@ -3435,7 +3532,7 @@ function RecruitersGroup({
 }) {
   const owner = candidate.recruiterOwner;
   const coRecruiters = candidate.coRecruiters ?? [];
-  const available = INTERNAL_USERS.filter(
+  const available = getInternalUsers().filter(
     (user) => user !== owner && !coRecruiters.includes(user)
   );
   const selectRef = useRef<HTMLSelectElement>(null);
@@ -3475,7 +3572,7 @@ function RecruitersGroup({
           }}
         >
           <option value="">Assign owner</option>
-          {INTERNAL_USERS.map((user) => (
+          {getInternalUsers().map((user) => (
             <option key={user} value={user}>
               {user}
             </option>
@@ -3746,9 +3843,9 @@ function CandidateHeaderSummary({
         {active && stageDays !== null && (
           <RpChip
             tone={
-              stageDays >= STAGE_ALERT_DAYS
+              stageSlaLevel(candidate.processStatus, stageDays) === "bad"
                 ? "red"
-                : stageDays >= STAGE_WARN_DAYS
+                : stageSlaLevel(candidate.processStatus, stageDays) === "warn"
                   ? "amber"
                   : "gray"
             }
@@ -3781,6 +3878,17 @@ function CandidateHeaderSummary({
             <Phone aria-hidden="true" />
             Last contact{" "}
             {daysSinceContact === 0 ? "today" : `${daysSinceContact} days ago`}
+          </RpChip>
+        )}
+
+        {isRecontactOpen(candidate) && (
+          <RpChip
+            tone="amber"
+            title={`Requested ${candidate.recontactRequestedAt?.slice(0, 10) ?? ""}. It closes when a contact is logged.`}
+          >
+            <Phone aria-hidden="true" />
+            Recontact requested
+            {candidate.recontactRequestedBy ? ` by ${candidate.recontactRequestedBy}` : ""}
           </RpChip>
         )}
 

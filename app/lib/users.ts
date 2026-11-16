@@ -1,6 +1,4 @@
-// Usuarios internos que pueden ser responsables de cuentas, posiciones y candidatos.
-// Cuando exista el backend, esta lista sale de la tabla de usuarios.
-export const INTERNAL_USERS = ["Ana", "Germán", "Sofía"];
+// La lista de responsables posibles sale del directorio de usuarios (lib/userDirectory.ts).
 
 export function getUserInitials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);

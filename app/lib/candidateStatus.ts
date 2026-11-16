@@ -187,6 +187,7 @@ export function getPresentationReadiness(candidate: CandidateMini) {
 }
 
 // ---------- Historial por etapas ----------
+// Obsoletos: los días en etapa ahora se comparan con el tiempo esperado de cada etapa (lib/stageSla).
 export const STAGE_WARN_DAYS = 7;
 export const STAGE_ALERT_DAYS = 14;
 

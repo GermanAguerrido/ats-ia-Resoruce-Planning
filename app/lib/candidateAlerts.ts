@@ -4,8 +4,6 @@ import {
   AGING_DAYS,
   CONTACT_ALERT_DAYS,
   PROCESS_STATUS_INFO,
-  STAGE_ALERT_DAYS,
-  STAGE_WARN_DAYS,
   getCurrentStageEntry,
   getDaysInCurrentStage,
   getDaysInProcess,
@@ -14,6 +12,7 @@ import {
   isInProcessCandidate,
   seniorityRank,
 } from "./candidateStatus";
+import { slaRangeOf, stageSlaLevel } from "./stageSla";
 
 export type CandidateAlert = {
   id: string;
@@ -24,8 +23,9 @@ export type CandidateAlert = {
 
 /**
  * Alertas de un candidato en proceso: son las mismas que se ven en su ficha. Se usan en el
- * filtro "My alerts" del tablero. Los umbrales están en candidateStatus (7 y 14 días en etapa,
- * 10 días sin contacto, 14 días en proceso).
+ * filtro "My alerts" del tablero. Los días en etapa se comparan con el tiempo esperado de cada
+ * etapa (lib/stageSla): ámbar sobre el máximo, rojo sobre el doble. Los otros umbrales están en
+ * candidateStatus (10 días sin contacto, 14 días en proceso).
  */
 export function getCandidateAlerts(
   candidate: CandidateMini,
@@ -44,11 +44,15 @@ export function getCandidateAlerts(
   const entry = getCurrentStageEntry(candidate);
   const now = Date.now();
 
-  if (stageDays !== null && stageDays >= STAGE_WARN_DAYS) {
+  const stageLevel =
+    stageDays !== null ? stageSlaLevel(candidate.processStatus, stageDays) : null;
+  const stageMax = slaRangeOf(candidate.processStatus)?.max;
+
+  if (stageDays !== null && stageLevel && stageLevel !== "ok") {
     alerts.push({
       id: "stage",
-      label: `${stageDays}d in ${stageLabel}`,
-      tone: stageDays >= STAGE_ALERT_DAYS ? "danger" : "warn",
+      label: `${stageDays}d in ${stageLabel}${stageMax ? ` (max ${stageMax}d)` : ""}`,
+      tone: stageLevel === "bad" ? "danger" : "warn",
     });
   }
 
@@ -91,7 +95,7 @@ export function getCandidateAlerts(
   if (
     processDays !== null &&
     processDays >= AGING_DAYS &&
-    !(stageDays !== null && stageDays >= STAGE_ALERT_DAYS)
+    stageLevel !== "bad"
   ) {
     alerts.push({ id: "aging", label: `${processDays}d in process`, tone: "warn" });
   }

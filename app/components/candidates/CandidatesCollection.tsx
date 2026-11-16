@@ -16,6 +16,7 @@ import {
 } from "@/app/lib/candidateBudget";
 import { notesSnippet } from "@/app/lib/candidateSearch";
 import { isCompetitor } from "@/app/lib/companies";
+import { isRecontactOpen } from "@/app/lib/recontact";
 import {
   isInternalRow,
   rowSeniority,
@@ -102,11 +103,7 @@ function SalaryCell({
 function LastContact({ row, onRecontact }: { row: CandidateRow; onRecontact: () => void }) {
   const days = daysSince(row.main.lastContactAt);
   const old = days !== null && days >= CONTACT_ALERT_DAYS;
-  const requested =
-    Boolean(row.main.recontactRequestedAt) &&
-    (days === null ||
-      new Date(row.main.recontactRequestedAt as string).getTime() >
-        new Date(row.main.lastContactAt as string).getTime());
+  const requested = isRecontactOpen(row.main);
 
   return (
     <div className="flex flex-col items-start gap-1">
@@ -249,6 +246,13 @@ export function CandidatesCollection(props: Props) {
               <div className="flex items-start justify-between gap-2">
                 <span className="font-semibold app-text-primary">
                   <Highlight text={row.main.name} term={query} />
+                  {row.main.consultora && (
+                    <span className="ml-1.5">
+                      <Tag tone="violet" small>
+                        {row.main.consultora}
+                      </Tag>
+                    </span>
+                  )}
                 </span>
                 <div className="flex items-center gap-1">
                   <OpenInNewTab id={row.id} />
@@ -337,6 +341,11 @@ export function CandidatesCollection(props: Props) {
                     <p className="font-semibold app-text-primary">
                       <Highlight text={row.main.name} term={query} />
                     </p>
+                    {row.main.consultora && (
+                      <Tag tone="violet" small>
+                        {row.main.consultora}
+                      </Tag>
+                    )}
                     <OpenInNewTab id={row.id} />
                   </div>
 

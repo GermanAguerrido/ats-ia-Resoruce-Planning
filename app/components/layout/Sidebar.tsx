@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useCurrentUser } from "../../lib/currentUser";
+import { levelOf, usePermissions, type AreaId } from "../../lib/permissions";
+import { useOnboardingReminders } from "../../lib/onboarding";
 import { countOpenTodos, useTodoItems } from "../../lib/todoItems";
 import { NotificationBell } from "../todo/NotificationBell";
 import { ThemeToggle } from "./ThemeToggle";
@@ -10,46 +12,77 @@ import { ThemeToggle } from "./ThemeToggle";
 type MenuItem = {
   label: string;
   href: string;
-  // Solo se muestra a Talent y Admin (no a recruiters)
-  talentOnly?: boolean;
+  // Se muestra si el rol tiene alguno de estos niveles en alguna de estas áreas (sección D)
+  areas: AreaId[];
+  levels?: Array<"full" | "own" | "view">;
 };
 
 const menuItems: MenuItem[] = [
   {
     label: "Dashboard",
     href: "/",
+    areas: ["dashboard_overview", "dashboard_mine"],
   },
   {
     label: "Candidates",
     href: "/candidates",
+    areas: ["candidates"],
+    // "Own only" es la consultora: ella trabaja desde su propio módulo (/consultora)
+    levels: ["full", "view"],
   },
   {
     label: "Resource Planning",
     href: "/jobs",
+    areas: ["resource_planning"],
   },
   {
     label: "To-Do",
     href: "/todo",
+    areas: ["todo_mine"],
   },
   {
     label: "AI Match",
     href: "/ai-match",
-    talentOnly: true,
+    areas: ["ai_match"],
   },
   {
     label: "Budget",
     href: "/budget",
-    talentOnly: true,
+    areas: ["budget"],
+  },
+  {
+    label: "Consultora",
+    href: "/consultora",
+    areas: ["consultora_candidates", "consultora_positions", "charge_approval"],
+  },
+  {
+    label: "Onboarding",
+    href: "/onboarding",
+    areas: ["onboarding"],
+  },
+  {
+    label: "Users",
+    href: "/users",
+    areas: ["users"],
   },
 ];
 
 export function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
   const { user, role } = useCurrentUser();
+
+  // Avisa a la recruiter cuando alguien pasa a Hired y falta la ficha de onboarding
+  useOnboardingReminders();
   const todoCount = countOpenTodos(useTodoItems(user, role, "mine"));
 
-  const visibleItems = menuItems.filter(
-    (item) => !item.talentOnly || role === "talent" || role === "admin"
+  // Qué ve cada rol sale de la matriz de permisos (sección D)
+  const permissions = usePermissions();
+  const visibleItems = menuItems.filter((item) =>
+    item.areas.some((area) => {
+      const level = levelOf(role, area, permissions);
+
+      return item.levels ? (item.levels as string[]).includes(level) : level !== "none";
+    })
   );
 
   return (

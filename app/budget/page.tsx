@@ -32,6 +32,7 @@ export default function BudgetPage() {
 
   return (
     <TalentPageShell
+      area="budget"
       title="Budget"
       subtitle="Budget by role and seniority, negotiable margin and minimum English. It colors the expected salary in Candidates."
     >

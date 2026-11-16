@@ -29,6 +29,8 @@ import { buildNotesIndex } from "../lib/candidateSearch";
 import { PROCESS_FLOW, PROCESS_OUTCOMES, PROCESS_STATUS_INFO, seniorityRank } from "../lib/candidateStatus";
 import { COMPETITOR_COMPANIES, isCompetitor } from "../lib/companies";
 import { useCurrentUser } from "../lib/currentUser";
+import { NoAccessScreen } from "../components/dashboard/NoAccessScreen";
+import { levelOf, usePermissions } from "../lib/permissions";
 import { buildCandidateDirectory } from "../lib/candidateDirectory";
 import { ENGLISH_LEVELS, englishRank } from "../lib/englishLevels";
 import { pushNotification } from "../lib/notifications";
@@ -97,7 +99,8 @@ function compareRows(a: CandidateRow, b: CandidateRow, sort: SortState) {
 export default function CandidatesPage() {
   const board = useBoardState();
   const { isLoaded, projectColumns, orderedProjects } = board;
-  const { user } = useCurrentUser();
+  const { user, role } = useCurrentUser();
+  const permissions = usePermissions();
   const { config: budget } = useBudgetConfig();
   const [coverageRatio] = useCoverageRatio();
 
@@ -395,6 +398,11 @@ export default function CandidatesPage() {
 
   const tabsToShow = roleTabs.slice(0, MAX_TABS);
   const selectedTabHidden = roleSel && !tabsToShow.some((item) => item.key === roleSel);
+
+  // "Own only" es la consultora: su propia base llega con la sección E
+  if (!["full", "view"].includes(levelOf(role, "candidates", permissions))) {
+    return <NoAccessScreen area="the Candidates database" />;
+  }
 
   return (
     <div className="min-h-screen app-bg px-8 py-8">

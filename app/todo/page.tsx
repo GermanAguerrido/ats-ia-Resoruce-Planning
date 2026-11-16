@@ -5,6 +5,7 @@ import { CandidatesStyles, Tag } from "../components/candidates/CandidatesStyles
 import { SourcingPanel } from "../components/todo/SourcingPanel";
 import { useCurrentUser } from "../lib/currentUser";
 import { setNotificationState } from "../lib/notifications";
+import { canAccess, usePermissions } from "../lib/permissions";
 import {
   PRIORITY_INFO,
   TODO_TYPES,
@@ -24,7 +25,8 @@ const PRIORITIES: TodoPriority[] = ["high", "med", "low"];
 
 export default function TodoPage() {
   const { user, role } = useCurrentUser();
-  const isTalent = role === "talent" || role === "admin";
+  const permissions = usePermissions();
+  const isTalent = canAccess(role, "todo_team", permissions);
 
   const [tab, setTab] = useState<Tab>("todo");
   const [scope, setScope] = useState<"mine" | "team">("mine");

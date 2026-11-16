@@ -17,7 +17,7 @@ import { fileToCoverDataUrl } from "@/app/lib/imageUtils";
 import { sanitizeRichHtml } from "@/app/lib/richText";
 import { SENIORITY_LEVELS } from "@/app/lib/candidateStatus";
 import { ENGLISH_LEVELS } from "@/app/lib/englishLevels";
-import { INTERNAL_USERS } from "@/app/lib/users";
+import { getInternalUsers } from "@/app/lib/userDirectory";
 import { RichTextField } from "./RichTextField";
 import { UserAvatar } from "./UserAvatar";
 
@@ -70,6 +70,9 @@ export type NewCandidatePayload = {
   resumeStatus: CandidateResumeStatus;
   talentType: CandidateTalentType;
   notes: string;
+  // Alta desde la consultora externa (sección E): nombre de la consultora y CV adjunto
+  consultora?: string;
+  cvFile?: { name: string; size: number };
 };
 
 type Props = {
@@ -99,7 +102,6 @@ type Props = {
   ) => void;
 };
 
-const OWNER_OPTIONS = INTERNAL_USERS;
 const SENIORITY_OPTIONS = ["JR", "SSR", "SR", "Lead"];
 const ENGLISH_OPTIONS = ["", ...ENGLISH_LEVELS];
 
@@ -401,7 +403,7 @@ function ProjectForm({
                 className={inputClass}
               >
                 <option value="">Not assigned</option>
-                {INTERNAL_USERS.map((user) => (
+                {getInternalUsers().map((user) => (
                   <option key={user} value={user}>
                     {user}
                   </option>
@@ -530,7 +532,7 @@ function PositionForm({
   const [title, setTitle] = useState("");
   const [seniority, setSeniority] = useState("SR");
   const [quantity, setQuantity] = useState("1");
-  const [owner, setOwner] = useState(OWNER_OPTIONS[0]);
+  const [owner, setOwner] = useState(getInternalUsers()[0]);
   const [status, setStatus] = useState<"open" | "on_hold">("open");
   const [jd, setJd] = useState("");
 
@@ -601,7 +603,7 @@ function PositionForm({
               onChange={(event) => setOwner(event.target.value)}
               className={inputClass}
             >
-              {OWNER_OPTIONS.map((option) => (
+              {getInternalUsers().map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
@@ -750,7 +752,7 @@ function CandidateForm({
   const [salaryExpected, setSalaryExpected] = useState("");
   const [workRelation, setWorkRelation] = useState("");
   const [seniority, setSeniority] = useState("");
-  const [recruiterOwner, setRecruiterOwner] = useState(OWNER_OPTIONS[0]);
+  const [recruiterOwner, setRecruiterOwner] = useState(getInternalUsers()[0]);
   const [processStatus, setProcessStatus] =
     useState<CandidateProcessStatus>("contacted");
   const [resumeStatus, setResumeStatus] = useState<CandidateResumeStatus>("none");
@@ -1019,7 +1021,7 @@ function CandidateForm({
               onChange={(event) => setRecruiterOwner(event.target.value)}
               className={inputClass}
             >
-              {OWNER_OPTIONS.map((option) => (
+              {getInternalUsers().map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>

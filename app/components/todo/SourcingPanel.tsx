@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { INTERNAL_USERS } from "@/app/lib/users";
+import { getInternalUsers } from "@/app/lib/userDirectory";
 import { getRoleOf } from "@/app/lib/currentUser";
 import { isHiredCandidate } from "@/app/lib/candidateStatus";
 import {
@@ -47,7 +47,7 @@ export function SourcingPanel({ user, onAsked }: Props) {
     );
   }, [projects, ratio]);
 
-  const recruiters = INTERNAL_USERS.filter((name) => getRoleOf(name) === "recruiter");
+  const recruiters = getInternalUsers().filter((name) => getRoleOf(name) === "recruiter");
 
   const askFor = (role: string, key: string, seniority: string, have: number, target: number) => {
     const ref = `sourcing:${key}:${seniority}`;

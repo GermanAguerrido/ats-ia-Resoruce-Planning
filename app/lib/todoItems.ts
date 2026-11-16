@@ -15,6 +15,7 @@ import {
   daysSince,
 } from "./candidateStatus";
 import type { UserRole } from "./currentUser";
+import { canAccess, usePermissions } from "./permissions";
 import { stateOf, useAllNotifications, type AppNotification } from "./notifications";
 import { buildRoleDemand } from "./roleDemand";
 import { useCoverageRatio } from "./sourcingRule";
@@ -423,6 +424,7 @@ export function useTodoItems(user: string, role: UserRole, scope: "mine" | "team
   const [snoozes, setSnoozes] = useState<SnoozeMap>({});
   const notifications = useAllNotifications();
   const [ratio] = useCoverageRatio();
+  const permissions = usePermissions();
 
   useEffect(() => {
     const sync = () => {
@@ -444,7 +446,7 @@ export function useTodoItems(user: string, role: UserRole, scope: "mine" | "team
 
   return useMemo(() => {
     const all = buildTodoItems({ projects, notifications, ratio });
-    const seeAll = scope === "team" && (role === "talent" || role === "admin");
+    const seeAll = scope === "team" && canAccess(role, "todo_team", permissions);
 
     const visible = all.filter(
       (item) =>
@@ -457,7 +459,7 @@ export function useTodoItems(user: string, role: UserRole, scope: "mine" | "team
       item,
       snoozed: !item.done && isSnoozed(snoozes, user, item.id),
     }));
-  }, [projects, notifications, ratio, snoozes, user, role, scope]);
+  }, [projects, notifications, ratio, snoozes, user, role, scope, permissions]);
 }
 
 /** Cantidad de pendientes propios (sin los pospuestos ni los cerrados). */

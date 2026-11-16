@@ -88,6 +88,23 @@ function updateWhere(
   writeNotifications(readNotifications().map((item) => (match(item) ? change(item) : item)));
 }
 
+/** Cierra los pendientes que comparten una clave (por ejemplo "onboarding:it:<id>"). */
+export function closeNotificationsByRef(ref: string) {
+  updateWhere(
+    (item) => item.ref === ref && stateOf(item) === "pending",
+    (item) => ({ ...item, state: "done", readAt: item.readAt ?? new Date().toISOString() })
+  );
+}
+
+/** Cierra los pedidos de recontacto pendientes de una persona (cuando el recruiter la contacta). */
+export function closeRecontactRequests(candidateId: string) {
+  updateWhere(
+    (item) =>
+      item.kind === "recontact" && item.candidateId === candidateId && stateOf(item) === "pending",
+    (item) => ({ ...item, state: "done", readAt: item.readAt ?? new Date().toISOString() })
+  );
+}
+
 export function markNotificationRead(id: string) {
   updateWhere(
     (item) => item.id === id && !item.readAt,

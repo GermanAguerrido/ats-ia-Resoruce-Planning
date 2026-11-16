@@ -32,6 +32,7 @@ export default function AiMatchPage() {
 
   return (
     <TalentPageShell
+      area="ai_match"
       title="AI match"
       subtitle="Match the job description of an open position against the candidate database."
     >

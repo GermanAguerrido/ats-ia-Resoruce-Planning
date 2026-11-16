@@ -78,6 +78,8 @@ export type CandidateMini = {
   resumeStatus: CandidateResumeStatus;
   talentType: CandidateTalentType;
   email?: string;
+  // Mail corporativo creado por IT en el onboarding (sección F)
+  corporateEmail?: string;
   linkedin?: string;
   portfolio?: string;
   salaryCurrent?: string;
@@ -87,6 +89,9 @@ export type CandidateMini = {
   source?: string;
   notes?: string;
   recruiterOwner?: string;
+  // Consultora externa que aportó el perfil (sección E) y fecha en que lo cargó o actualizó
+  consultora?: string;
+  consultoraLoadedAt?: string;
   // Recruiters adicionales (el owner es siempre recruiterOwner)
   coRecruiters?: string[];
   seniority?: string;

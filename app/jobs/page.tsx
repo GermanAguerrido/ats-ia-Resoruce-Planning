@@ -41,6 +41,8 @@ import { getCandidateAlerts, isCandidateOf } from "../lib/candidateAlerts";
 import { buildCandidateDirectory } from "../lib/candidateDirectory";
 import { getStageHistory, todayIso } from "../lib/candidateStatus";
 import { useCurrentUser } from "../lib/currentUser";
+import { canAccess, usePermissions } from "../lib/permissions";
+import { NoAccessScreen } from "../components/dashboard/NoAccessScreen";
 import type { StageMoveInput } from "../lib/stageGates";
 
 type ModalSession = {
@@ -117,7 +119,20 @@ export default function JobsPage() {
       return;
     }
 
-    const wanted = new URLSearchParams(window.location.search).get("position");
+    const params = new URLSearchParams(window.location.search);
+    const wantedProject = params.get("project");
+    const wanted = params.get("position");
+
+    // /jobs?project=<id> (desde el Dashboard) abre el proyecto
+    if (wantedProject && !wanted) {
+      const project = board.projectColumns.find((item) => item.id === wantedProject);
+
+      if (project) {
+        setModalSession({ projectId: project.id, initialPosition: null, initialCandidate: null });
+      }
+
+      return;
+    }
 
     if (!wanted) {
       return;
@@ -146,6 +161,7 @@ export default function JobsPage() {
 
   // Usuario activo (provisorio) y filtro "My alerts" (solo para recruiters)
   const { user, role } = useCurrentUser();
+  const permissions = usePermissions();
   const [myAlerts, setMyAlerts] = useState(false);
   const alertsActive = myAlerts && role === "recruiter";
 
@@ -489,6 +505,11 @@ export default function JobsPage() {
       : null;
 
   const visibleCount = visibleActive.length + visibleArchived.length;
+
+  // La consultora no ve Resource Planning
+  if (!canAccess(role, "resource_planning", permissions)) {
+    return <NoAccessScreen area="Resource Planning" />;
+  }
 
   return (
     <main className="flex h-screen flex-col app-bg">
